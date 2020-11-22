@@ -1,20 +1,11 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Thu Nov 12 09:58:10 2015
-
-@author: Daniel Høyer Iversen
-"""
 
 import unittest
-
 import numpy as np
 
-import pyIGTLink
+import pyigtl
 
 import time
-
-IGTL_HEADER_SIZE = 58
-
 
 # class TestServer(unittest.TestCase):
     # """

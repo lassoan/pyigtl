@@ -47,16 +47,17 @@ class OpenIGTLinkBase():
         self.outgoing_messages = collections.deque(maxlen=100)
         self.lock_outgoing_messages = threading.Lock()
 
-    def send_message(self, message, wait=False):
+    def send_message(self, message, wait=True):
         """Put the message in the outgoing message queue.
         wait: wait until the message is actually sent
         """
         return self._add_message_to_send_queue(message, wait)
 
-    def wait_for_message(self, device_name, timeout=10):
+    def wait_for_message(self, device_name, timeout=-1):
         """Get the most recent message from the specified device.
         If no message is available yet then wait up to the specified timeout (in seconds).
         If timeout value is reached then the method returns ``None``.
+        If timeout is set to negative value then it waits indefinitely.
         """
         start_time = time.time()
         while True:
@@ -64,7 +65,7 @@ class OpenIGTLinkBase():
                 if device_name in self.incoming_messages:
                     message = self.incoming_messages.pop(device_name)
                     return message
-            if time.time()-start_time > timeout:
+            if timeout >= 0 and (time.time()-start_time > timeout):
                 return None
             time.sleep(0.01)
 
@@ -310,7 +311,7 @@ class OpenIGTLinkClient(OpenIGTLinkBase):
             # Create socket
             if self.socket is None:
                 self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.socket.settimeout(0.1)
+                self.socket.settimeout(0.01)
                 self._connected = False
 
             # Reconnect if needed
@@ -325,7 +326,7 @@ class OpenIGTLinkClient(OpenIGTLinkBase):
                 time.sleep(0.01)
                 continue
 
-            # Receive one
+            # Receive messages
             try:
               while self._receive_message_from_socket(self.socket):
                   pass
@@ -335,7 +336,7 @@ class OpenIGTLinkClient(OpenIGTLinkBase):
                 _print('Error while receiving data: '+str(exp))
                 self._communication_error_occurred()
 
-            # Send one
+            # Send messages
             try:
                 while self._send_queued_message_from_socket(self.socket):
                     pass

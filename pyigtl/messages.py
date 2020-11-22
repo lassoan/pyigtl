@@ -27,12 +27,6 @@ else:
 class MessageBase(object):
     """OpenIGTLink message base class"""
 
-    # message_type_to_class_constructor = {
-    #     "TRANSFORM": TransformMessage,
-    #     "IMAGE": ImageMessage,
-    #     "STRING": StringMessage,
-    # }
-
     def __init__(self, timestamp=None, device_name=None):
 
         # The device name field contains an ASCII character string specifying the name of the the message.
@@ -79,6 +73,28 @@ class MessageBase(object):
         """
         return self._message_type
 
+    @staticmethod
+    def encode_text(text):
+        """Encode string as ASCII if possible, UTF8 otherwise"""
+        try:
+            encoded_text = text.encode('ascii')
+            encoding = IANA_CHARACTER_SET_ASCII
+        except UnicodeDecodeError:
+            encoded_text = text.encode('utf8')
+            encoding = IANA_CHARACTER_SET_UTF8
+        return encoded_text, encoding
+
+    @staticmethod
+    def decode_text(encoded_text, encoding):
+        """Get string by decoding from ASCII or UTF8"""
+        if encoding == IANA_CHARACTER_SET_ASCII:
+            text = encoded_text.decode('ascii')
+        elif encoding == IANA_CHARACTER_SET_UTF8:
+            text = encoded_text.decode('utf8')
+        else:
+            raise("Unsupported encoding: "+str(encoding))
+        return text
+
     def __str__(self):
         output = f'{self._message_type} message:'
         output += f'\n  Device name: {self.device_name}'
@@ -108,10 +124,10 @@ class MessageBase(object):
         binary_metadata_body = b""
         if self.header_version>1:
             for key, value in items(self.metadata):
-                encoded_key = key.encode('ascii')
-                encoded_value = value.encode('utf-8')  # TODO: use the encoding specified in self._encoding
+                encoded_key = key.encode('utf8')  # use UTF8 for all strings that specified without encoding
+                encoded_value, encoding = MessageBase.encode_text(value)
                 binary_metadata_header += struct.pack(self._endian+"H", len(encoded_key))
-                binary_metadata_header += struct.pack(self._endian+"H", self._encoding)
+                binary_metadata_header += struct.pack(self._endian+"H", encoding)
                 binary_metadata_header += struct.pack(self._endian+"I", len(encoded_value))
                 binary_metadata_body += encoded_key
                 binary_metadata_body += encoded_value
@@ -134,8 +150,8 @@ class MessageBase(object):
         _timestamp1 = int(self.timestamp / 1000)
         _timestamp2 = _igtl_nanosec_to_frac(int((self.timestamp / 1000.0 - _timestamp1)*10**9))
         binary_header = struct.pack(self._endian+"H", self.header_version)
-        binary_header += struct.pack(self._endian+"12s", self._message_type.encode('utf-8'))
-        binary_header += struct.pack(self._endian+"20s", self.device_name.encode('utf-8'))
+        binary_header += struct.pack(self._endian+"12s", self._message_type.encode('utf8'))
+        binary_header += struct.pack(self._endian+"20s", self.device_name.encode('utf8'))
         binary_header += struct.pack(self._endian+"II", _timestamp1, _timestamp2)
         binary_header += struct.pack(self._endian+"Q", body_length)
         binary_header += struct.pack(self._endian+"Q", crc)
@@ -205,10 +221,9 @@ class MessageBase(object):
                 key_size, value_encoding, value_size = struct.Struct('> H H I').unpack(metadata[index*8+2:index*8+10])
                 key = metadata[read_offset:read_offset+key_size].decode()
                 read_offset += key_size
-                # TODO: decode based on value_encoding, we assume UTF8 now
-                value = metadata[read_offset:read_offset+value_size].decode()
+                encoded_value = metadata[read_offset:read_offset+value_size]
                 read_offset += value_size
-                self.metadata[key] = value
+                self.metadata[key] = MessageBase.decode_text(encoded_value, value_encoding)
 
         # Unpack content
         if metadata_size > 0:
@@ -479,34 +494,183 @@ class TransformMessage(MessageBase):
                                    [0, 0, 0, 1]])
 
 class StringMessage(MessageBase):
-    def __init__(self, string=None, timestamp=None, device_name='', encoding=3):
-
-        MessageBase.__init__(self)
-        self._valid_message = True
+    def __init__(self, string=None, timestamp=None, device_name=None):
+        MessageBase.__init__(self, timestamp=timestamp, device_name=device_name)
         self._message_type = "STRING"
-        if timestamp:
-            self.timestamp = timestamp
-        self.device_name = device_name
-        self._encoding = encoding  # Character encoding type as MIBenum value. Default=3 (US-ASCII).
         if string is not None:
-            self._string = string
+            self.string = string
         else:
             self.string = ""
+        self._valid_message = True
+
+    def content_asstring(self):
+        return 'String: ' + self.string
 
     def _pack_content(self):
-        binary_content = struct.pack(self._endian+"H", self._encoding)
-        binary_content += struct.pack(self._endian+"H", len(self._string))
-        binary_content += self._string.encode("utf-8")
+        encoded_string, encoding = MessageBase.encode_text(self.string)
+        binary_content = struct.pack(self._endian+"H", encoding)
+        binary_content += struct.pack(self._endian+"H", len(encoded_string))
+        binary_content += encoded_string
         return binary_content
 
     def _unpack_content(self, content):
         header_portion_len = 2 + 2
-        s_head = struct.Struct('> H H')
+        values_header = struct.Struct('> H H').unpack(content[:header_portion_len])
+        encoding = values_header[0]
+        string_length = values_header[1]
+        encoded_string = content[header_portion_len:header_portion_len + string_length]
+        self._string = MessageBase.decode_text(encoded_string, encoding)
 
-        values_header = s_head.unpack(content)
-        self._encoding = values_header[0]
-        stringLength = values_header[1]
-        self._string = str(message[header_portion_len:header_portion_len + stringLength])
+
+class PointMessage(MessageBase):
+    def __init__(self, positions=None, names=None, rgba_colors=None, diameters=None, groups=None, owners=None,
+                 timestamp=None, device_name=None):
+        """
+        positions: 3-element vector (for 1 point) or Nx3 matrix (for N points)
+        """
+        MessageBase.__init__(self, timestamp=timestamp, device_name=device_name)
+        self._message_type = "POINT"
+        self.positions = positions
+        self.names = names
+        self.rgba_colors = rgba_colors
+        self.diameters = diameters
+        self.groups = groups
+        self.owners = owners
+        self._valid_message = True
+
+    def content_asstring(self):
+        items = []
+        name_array, group_array, rgba_array, xyz_array, diameter_array, owner_array = self._get_properties_as_arrays()
+        point_count = len(name_array)
+        for point_index in range(point_count):
+            item = f"Point {point_index+1}: name: '{name_array[point_index]}'"
+            if group_array[point_index]:
+                item += f", group: '{group_array[point_index]}'"
+            xyz = xyz_array[point_index]
+            item += f", xyz: [{xyz[0]}, {xyz[1]}, {xyz[2]}]"
+            rgba = rgba_array[point_index]
+            item += f", rgba: [{rgba[0]}, {rgba[1]}, {rgba[2]}, {rgba[3]}]"
+            item += f", diameter: {diameter_array[point_index]}"
+            if owner_array[point_index]:
+                item += f", owner: '{owner_array[point_index]}'"
+            items.append(item)
+        
+        return "\n".join(items)
+
+    def _get_properties_as_arrays(self):
+        # Get number of points from the number of specified point coordinate triplets
+        xyz_array = np.asarray(self.positions, dtype=np.float32)
+        point_count = 0
+        if len(xyz_array.shape) == 1:
+            if xyz_array.shape[0] == 3:
+                point_count = 1
+                xyz_array = [xyz_array]
+        elif len(xyz_array.shape) == 2:
+            if xyz_array.shape[1] == 3:
+                point_count = xyz_array.shape[0]
+        if point_count == 0:
+            raise ValueError("Point positions must be 3-element vector or Nx3 matrix")
+
+        # name
+        if not self.names:
+            name_array = [''] * point_count
+        elif isinstance(self.names, str):
+            name_array = [self.names] * point_count
+        elif len(self.names) == point_count:
+            name_array = self.names
+        else:
+            raise ValueError("Point names must be either a string or list of strings with same number of items as positions")
+
+        # group
+        if not self.groups:
+            group_array = [''] * point_count
+        elif isinstance(self.groups, str):
+            group_array = [self.groups] * point_count
+        elif len(self.groups) == point_count:
+            group_array = self.groups
+        else:
+            raise ValueError("Point groups must be either a string or list of strings with same number of items as positions")
+
+        # owner
+        if not self.owners:
+            owner_array = [''] * point_count
+        elif isinstance(self.owners, str):
+            owner_array = [self.owners] * point_count
+        elif len(self.owners) == point_count:
+            owner_array = self.owners
+        else:
+            raise ValueError("Point owners must be either a string or list of strings with same number of items as positions")
+
+        # rgba (4xN)
+        if not self.rgba_colors:
+            rgba_array = [255, 255, 0, 255] * point_count
+        else:
+            try:
+                rgba_array = np.array(self.rgba_colors, dtype=np.uint8)
+                if len(rgba_array.shape) == 1 and rgba_array.shape[0] == 4:
+                    # single rgba vector, repeat it point_count times
+                    rgba_array = np.broadcast_to(rgba_array, (point_count, 4))
+                elif len(rgba_array.shape) != 2 or rgba_array.shape[1] != 4 or rgba_array.shape[0] != point_count:
+                    raise ValueError()
+            except:
+                raise("Point rgba must be either a vector of 4 integers or a matrix with 4 rows and same of columns as positions")
+
+        if not self.diameters:
+            diameter_array = np.zeros(point_count)
+        else:
+            try:
+                diameter_array = np.array(self.diameters, dtype=np.float32)
+                if len(diameter_array.shape) == 0:
+                    # single diameter value, repeat it point_count times
+                    diameter_array = np.broadcast_to(diameter_array, point_count)
+                elif len(diameter_array.shape) != 1 or diameter_array.shape[0] != point_count:
+                    raise ValueError()
+            except:
+                raise("Point diameter must be either single float value or a vector with same number as positions")
+
+        return name_array, group_array, rgba_array, xyz_array, diameter_array, owner_array
+
+    def _pack_content(self):
+
+        name_array, group_array, rgba_array, xyz_array, diameter_array, owner_array = self._get_properties_as_arrays()
+        point_count = len(name_array)
+
+        binary_content = b""
+        for point_index in range(point_count):
+            binary_content += struct.pack(self._endian+"64s", name_array[point_index].encode('utf8'))
+            binary_content += struct.pack(self._endian+"32s", group_array[point_index].encode('utf8'))
+            rgba = rgba_array[point_index]
+            binary_content += struct.pack(self._endian+"B", rgba[0])
+            binary_content += struct.pack(self._endian+"B", rgba[1])
+            binary_content += struct.pack(self._endian+"B", rgba[2])
+            binary_content += struct.pack(self._endian+"B", rgba[3])
+            xyz = xyz_array[point_index]
+            binary_content += struct.pack(self._endian+"f", xyz[0])
+            binary_content += struct.pack(self._endian+"f", xyz[1])
+            binary_content += struct.pack(self._endian+"f", xyz[2])
+            binary_content += struct.pack(self._endian+"f", diameter_array[point_index])
+            binary_content += struct.pack(self._endian+"20s", owner_array[point_index].encode('utf8'))
+
+        return binary_content
+
+    def _unpack_content(self, content):
+        self.positions = []
+        self.names = []
+        self.rgba_colors = []
+        self.diameters = []
+        self.groups = []
+        self.owners = []
+        s = struct.Struct('> 64s 32s B B B B f f f f 20s')  # big-endian
+        item_length = 64+32+4+4*3+4+20
+        point_count = int(len(content)/item_length)
+        for point_index in range(point_count):
+            values = s.unpack(content[point_index*item_length:(point_index+1)*item_length])
+            self.names.append(values[0].decode().rstrip(' \t\r\n\0'))
+            self.groups.append(values[1].decode().rstrip(' \t\r\n\0'))
+            self.rgba_colors.append((values[2], values[3], values[4], values[5]))
+            self.positions.append((values[6], values[7], values[8]))
+            self.diameters.append(values[9])
+            self.owners.append(values[10].decode().rstrip(' \t\r\n\0'))
 
 
 # http://slicer-devel.65872.n3.nabble.com/OpenIGTLinkIF-and-CRC-td4031360.html
@@ -542,4 +706,8 @@ message_type_to_class_constructor = {
         "TRANSFORM": TransformMessage,
         "IMAGE": ImageMessage,
         "STRING": StringMessage,
+        "POINT": PointMessage,
     }
+
+IANA_CHARACTER_SET_ASCII = 3
+IANA_CHARACTER_SET_UTF8 = 106

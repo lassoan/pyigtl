@@ -29,8 +29,8 @@ while True:
     timestep += 1
 
     # Generate image
-    data = np.random.randn(image_size[0], image_size[1])*50+100
-    image_message = ImageMessage(data, device_name="Image")
+    voxels = np.random.randn(image_size[0], image_size[1])*50+100
+    image_message = ImageMessage(voxels, device_name="Image")
 
     # Generate transform
     matrix = np.eye(4)
@@ -55,5 +55,6 @@ while True:
     for message in messages:
         print(message.device_name)
 
-    # Allow time for network transfer
+    # Do not flood the message queue,
+    # but allow a little time for background network transfer
     sleep(0.01)
