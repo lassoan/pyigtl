@@ -8,13 +8,16 @@ Implemented message types: IMAGE, TRANSFORM, STRING.
 
 ## Installation
 
-Using [pip](https://pip.pypa.io/en/stable/):
+The package is not yet available on PyPI or conda, therefore you need to download the files to your computer and add it to `PYTHONPATH` environent variable (for example, `PYTHONPATH=c:/dev/pyigtl`) before starting Python. Alternatively, you can add the module path in your Python code before importing pyigtl, for example:
 
 ```
-pip install pyigtl
+import sys
+sys.path.append("c:/dev/pyigtl")
 ```
 
 ## Example
+
+Wait until a message is received from a device named `ToolToReference` and print the message content:
 
 ```
 from pyigtl.comm import OpenIGTLinkClient
