@@ -4,7 +4,7 @@ Python implementation of [OpenIGTLink](http://openigtlink.org/), a lightweight r
 
 Tested with [3D Slicer](https://www.slicer.org) and [PLUS Toolkit](http://plustoolkit.org/).
 
-Implemented message types: IMAGE, TRANSFORM, STRING, POINT. Support latest OpenIGTLink version 3, including custom metadata fields.
+Implemented message types: IMAGE, TRANSFORM, STRING, POINT. Supports latest OpenIGTLink protocol (version 3), including custom metadata fields.
 
 ## Installation
 
