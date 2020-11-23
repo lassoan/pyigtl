@@ -7,7 +7,8 @@ from setuptools import setup, find_packages
 base_dir = os.path.dirname(os.path.dirname(__file__))
 with open(os.path.join(base_dir, 'pyigtl', '_version.py')) as f:
     exec(f.read())
-VERSION = __version__  # pylint does not know that this script injects a variable => pylint:disable=undefined-variable
+# pylint/flake does not know that this script injects a variable, so we need to disable checks
+VERSION = __version__  # pylint:disable=undefined-variable  # noqa: F821
 
 # Get long description from README.md
 with open(os.path.join(base_dir, 'README.md')) as f:
@@ -43,4 +44,4 @@ opts = dict(
 )
 
 if __name__ == '__main__':
-    setup(**opts) 
+    setup(**opts)

@@ -5,6 +5,7 @@ import pyigtl
 import time
 import unittest
 
+
 class TestServerClientRoundtrip(unittest.TestCase):
     """
     Test complete message roundtrip: server send -> client receive -> client send -> server receive
@@ -30,10 +31,10 @@ class TestServerClientRoundtrip(unittest.TestCase):
         # Client receive
         received_messages = self.client.get_latest_messages()
         self.assertTrue(len(received_messages) > 0)
-        
+
         # Client send
         for message in received_messages:
-          self.client.send_message(message)
+            self.client.send_message(message)
         time.sleep(1.0)
 
         # Server receive
@@ -49,6 +50,7 @@ class TestServerClientRoundtrip(unittest.TestCase):
                 message_matched = True
                 break
         self.assertTrue(message_matched)
+
 
 class TestMessageTypes(unittest.TestCase):
     """
@@ -69,11 +71,11 @@ class TestMessageTypes(unittest.TestCase):
 
         test_messages = [
             pyigtl.StringMessage("some message", device_name=device_name),
-            pyigtl.ImageMessage(np.random.randn(30, 10, 5)*50+100, device_name=device_name),
-            pyigtl.PointMessage([[20,30,10], [2,-5,-10], [12.4, 11.3, 0.3]], device_name=device_name),
+            pyigtl.ImageMessage(np.random.randn(30, 10, 5) * 50 + 100, device_name=device_name),
+            pyigtl.PointMessage([[20, 30, 10], [2, -5, -10], [12.4, 11.3, 0.3]], device_name=device_name),
             pyigtl.TransformMessage(np.eye(4), device_name=device_name),
         ]
-        
+
         for message in test_messages:
             self.assertTrue(self.server.send_message(message))
             self.assertIsNotNone(self.client.wait_for_message(device_name=device_name, timeout=5))
@@ -84,10 +86,10 @@ class TestMessageTypes(unittest.TestCase):
         test_messages = [
             pyigtl.StringMessage("some message", device_name=device_name),
             pyigtl.ImageMessage(np.random.randn(30, 10, 5)*50+100, device_name=device_name),
-            pyigtl.PointMessage([[20,30,10], [2,-5,-10], [12.4, 11.3, 0.3]], device_name=device_name),
-            pyigtl.TransformMessage(np.array([[1,2,3,4], [5,6,7,8], [9,10,11,12], [0,0,0,1]]), device_name=device_name),
+            pyigtl.PointMessage([[20, 30, 10], [2, -5, -10], [12.4, 11.3, 0.3]], device_name=device_name),
+            pyigtl.TransformMessage(np.array([[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [0, 0, 0, 1]]), device_name=device_name),
         ]
-        
+
         pack_unpack_inconsistencies_found = 0
         for message in test_messages:
             print("Original message:\n"+str(message))
@@ -102,8 +104,9 @@ class TestMessageTypes(unittest.TestCase):
             else:
                 print(" -- Mismatch")
                 pack_unpack_inconsistencies_found += 1
-        
+
         self.assertEqual(pack_unpack_inconsistencies_found, 0)
+
 
 if __name__ == '__main__':
     unittest.main()

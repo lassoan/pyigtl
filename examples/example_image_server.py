@@ -11,7 +11,7 @@ import pyigtl  # pylint: disable=import-error
 
 from time import sleep
 import numpy as np
-from math import sin, cos
+from math import sin
 
 server = pyigtl.OpenIGTLinkServer(port=18944)
 
@@ -36,7 +36,7 @@ while True:
     voxels[mask] = 255
 
     # numpy image axes are in kji order, while we generated the image with ijk axes
-    voxels = np.transpose(voxels, axes=(2,1,0))
+    voxels = np.transpose(voxels, axes=(2, 1, 0))
 
     # Send image
     print(f"time: {timestep}   position: ({cx}, {cy})")

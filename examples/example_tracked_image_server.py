@@ -28,17 +28,17 @@ while True:
     timestep += 1
 
     # Generate image
-    voxels = np.random.randn(1,image_size[1], image_size[0])*50+100
+    voxels = np.random.randn(1, image_size[1], image_size[0]) * 50 + 100
     image_message = pyigtl.ImageMessage(voxels, device_name="Image")
 
     # Generate transform
     matrix = np.eye(4)
-    matrix[0,3] = sin(timestep*0.01) * 20.0
-    rotation_angle_rad = timestep*0.5 * pi/180.0
-    matrix[1,1] = cos(rotation_angle_rad)
-    matrix[2,1] = -sin(rotation_angle_rad)
-    matrix[1,2] = sin(rotation_angle_rad)
-    matrix[2,2] = cos(rotation_angle_rad)
+    matrix[0, 3] = sin(timestep * 0.01) * 20.0
+    rotation_angle_rad = timestep * 0.5 * pi / 180.0
+    matrix[1, 1] = cos(rotation_angle_rad)
+    matrix[2, 1] = -sin(rotation_angle_rad)
+    matrix[1, 2] = sin(rotation_angle_rad)
+    matrix[2, 2] = cos(rotation_angle_rad)
     transform_message = pyigtl.TransformMessage(matrix, device_name="ImageToReference", timestamp=image_message.timestamp)
 
     # Generate string

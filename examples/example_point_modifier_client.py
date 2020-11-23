@@ -18,9 +18,10 @@ while True:
 
     # Project points to XY plane
     newPositions = np.array(input_message.positions)
-    newPositions[:,2] = 0.0
+    newPositions[:, 2] = 0.0
 
     # Send updated positions and color as "F-modified" device
-    output_message = pyigtl.PointMessage(device_name='F-modified', positions=newPositions,
-        names=input_message.names, rgba_colors=[255,0,0,255])
+    output_message = pyigtl.PointMessage(
+        device_name='F-modified', positions=newPositions,
+        names=input_message.names, rgba_colors=[255, 0, 0, 255])
     client.send_message(output_message)

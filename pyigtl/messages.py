@@ -5,20 +5,14 @@ Created on Tue Nov  3 19:17:05 2015
 @author: Daniel Hoyer Iversen
 """
 
-import collections
 import crcmod
 import logging
 import numpy as np
-import signal
-import socket
-import socketserver as SocketServer
-import string
 import struct
-import sys
-import threading
 import time
 
 logger = logging.getLogger(__name__)
+
 
 # http://openigtlink.org/protocols/v2_header.html
 # OpenIGTLink uses big-endian for all numeric value storage (therefore ">" is added to all struct descriptors).
@@ -120,13 +114,13 @@ class MessageBase(object):
     def pack(self):
         """Return a buffer that contains the entire message as binary data"""
 
-        if self.metadata and self.header_version<2:
+        if self.metadata and self.header_version < 2:
             logger.warning("Metadata will not be packed, because message header version = 1 (metadata can only be sent in header version = 2).")
 
         # Pack metadata
         binary_metadata_header = b""
         binary_metadata_body = b""
-        if self.header_version>1:
+        if self.header_version > 1:
             for key, value in self.metadata.items():
                 encoded_key = key.encode('utf8')  # use UTF8 for all strings that specified without encoding
                 encoded_value, encoding = MessageBase.encode_text(value)
@@ -335,20 +329,20 @@ class ImageMessage(MessageBase):
         binary_message += struct.pack("> B", igtl_endianness)
 
         # World coordinate system (1:RAS 2:LPS)
-        binary_message += struct.pack("> B", 1 if self.world_coordinate_system=='ras' else 2)
+        binary_message += struct.pack("> B", 1 if self.world_coordinate_system == 'ras' else 2)
 
         # Image size
         binary_message += struct.pack("> H H H", image_size[0], image_size[1], image_size[2])
 
         spacing = np.ones(3)
         for axis_index in range(3):
-            spacing[axis_index] = np.linalg.norm(self.ijk_to_world_matrix[:,axis_index])
+            spacing[axis_index] = np.linalg.norm(self.ijk_to_world_matrix[:, axis_index])
 
         # Image to world transform
 
         # OpenIGTLink describes image position by specifying image center
         # instead of image origin.
-        image_center_ijk  = np.array([
+        image_center_ijk = np.array([
             (image_size[0] - 1) / 2.0,
             (image_size[1] - 1) / 2.0,
             (image_size[2] - 1) / 2.0,
@@ -356,16 +350,16 @@ class ImageMessage(MessageBase):
         image_center_world = self.ijk_to_world_matrix.dot(image_center_ijk)
 
         binary_message += struct.pack("> f f f f f f f f f f f f",
-            *self.ijk_to_world_matrix[0:3,0], # tx, ty, tz
-            *self.ijk_to_world_matrix[0:3,1], # sx, sy, sz
-            *self.ijk_to_world_matrix[0:3,2], # nx, ny, nz
-            *image_center_world[0:3]) # cx, cy, cz
+                                      *self.ijk_to_world_matrix[0:3, 0],  # tx, ty, tz
+                                      *self.ijk_to_world_matrix[0:3, 1],  # sx, sy, sz
+                                      *self.ijk_to_world_matrix[0:3, 2],  # nx, ny, nz
+                                      *image_center_world[0:3])  # cx, cy, cz
 
         # Starting index and size of subvolume
         subvolume_size = image_size
         binary_message += struct.pack("> H H H H H H",
-            0, 0, 0,
-            subvolume_size[0], subvolume_size[1], subvolume_size[2])
+                                      0, 0, 0,
+                                      subvolume_size[0], subvolume_size[1], subvolume_size[2])
 
         # Voxels
         binary_message += self.image.tobytes()
@@ -382,30 +376,30 @@ class ImageMessage(MessageBase):
         igtl_endianness = values_header[3]
 
         world_coordinate_system = values_header[4]
-        self.world_coordinate_system = 'ras' if world_coordinate_system==1 else 'lps'
+        self.world_coordinate_system = 'ras' if world_coordinate_system == 1 else 'lps'
 
         image_size = np.array(values_header[5:8])
 
         self.ijk_to_world_matrix = np.eye(4)
-        self.ijk_to_world_matrix[0:3,0] = values_header[8:11]  # t
-        self.ijk_to_world_matrix[0:3,1] = values_header[11:14]  # s
-        self.ijk_to_world_matrix[0:3,2] = values_header[14:17]  # n
-        self.ijk_to_world_matrix[0:3,3] = values_header[17:20]  # c
+        self.ijk_to_world_matrix[0:3, 0] = values_header[8:11]  # t
+        self.ijk_to_world_matrix[0:3, 1] = values_header[11:14]  # s
+        self.ijk_to_world_matrix[0:3, 2] = values_header[14:17]  # n
+        self.ijk_to_world_matrix[0:3, 3] = values_header[17:20]  # c
 
         # OpenIGTLink describes image position by specifying image center
         # instead of image origin.
-        image_origin_ijk  = np.array([
+        image_origin_ijk = np.array([
             -(image_size[0] - 1) / 2.0,
             -(image_size[1] - 1) / 2.0,
             -(image_size[2] - 1) / 2.0,
             1.0])
         image_origin_world = self.ijk_to_world_matrix.dot(image_origin_ijk)
-        self.ijk_to_world_matrix[0:3,3] = image_origin_world[0:3]
+        self.ijk_to_world_matrix[0:3, 3] = image_origin_world[0:3]
 
         # Subvolume
         subvolume_start_index = values_header[20:23]
         subvolume_size = values_header[23:26]
-        if subvolume_start_index != (0,0,0) or (subvolume_size != image_size).any():
+        if subvolume_start_index != (0, 0, 0) or (subvolume_size != image_size).any():
             # subvolumes are rarely sent, just throw an error instead of implementing it
             raise NotImplementedError("Subvolume receving is not implemented")
 
@@ -418,6 +412,7 @@ class ImageMessage(MessageBase):
             self.image = np.reshape(data, [image_size[2], image_size[1], image_size[0]])
         else:
             self.image = np.reshape(data, [image_size[2], image_size[1], image_size[0], numberOfComponents])
+
 
 class TransformMessage(MessageBase):
     def __init__(self, matrix=None, timestamp=None, device_name=None):
@@ -471,9 +466,10 @@ class TransformMessage(MessageBase):
         s = struct.Struct('> f f f f f f f f f f f f')
         values = s.unpack(content)
         self.matrix = np.asarray([[values[0], values[3], values[6], values[9]],
-                                   [values[1], values[4], values[7], values[10]],
-                                   [values[2], values[5], values[8], values[11]],
-                                   [0, 0, 0, 1]])
+                                  [values[1], values[4], values[7], values[10]],
+                                  [values[2], values[5], values[8], values[11]],
+                                  [0, 0, 0, 1]])
+
 
 class StringMessage(MessageBase):
     def __init__(self, string=None, timestamp=None, device_name=None):
@@ -536,8 +532,50 @@ class PointMessage(MessageBase):
             if owner_array[point_index]:
                 item += f", owner: '{owner_array[point_index]}'"
             items.append(item)
-        
+
         return "\n".join(items)
+
+    @staticmethod
+    def _get_string_property_as_array(string_value_or_array, point_count, label):
+        if not string_value_or_array:
+            return [''] * point_count
+        elif isinstance(string_value_or_array, str):
+            return [string_value_or_array] * point_count
+        elif len(string_value_or_array) == point_count:
+            return string_value_or_array
+        else:
+            raise ValueError(f"Point {label} must be either a string or list of strings with same number of items as positions")
+
+    def _get_rgba_property_as_array(self, point_count):
+        # rgba (4xN)
+        if not self.rgba_colors:
+            return [[255, 255, 0, 255]] * point_count
+        else:
+            try:
+                rgba_array = np.array(self.rgba_colors, dtype=np.uint8)
+                if len(rgba_array.shape) == 2 and rgba_array.shape[1] == 4 and rgba_array.shape[0] == point_count:
+                    return rgba_array
+                elif len(rgba_array.shape) == 1 and rgba_array.shape[0] == 4:
+                    # single rgba vector, repeat it point_count times
+                    return np.broadcast_to(rgba_array, (point_count, 4))
+                raise ValueError()
+            except Exception:
+                raise ValueError("Point rgba must be either a vector of 4 integers or a matrix with 4 rows and same of columns as positions")
+
+    def _get_diameter_property_as_array(self, point_count):
+        if not self.diameters:
+            return np.zeros(point_count)
+        else:
+            try:
+                diameter_array = np.array(self.diameters, dtype=np.float32)
+                if len(diameter_array.shape) == 1 and diameter_array.shape[0] == point_count:
+                    return diameter_array
+                elif len(diameter_array.shape) == 0:
+                    # single diameter value, repeat it point_count times
+                    return np.broadcast_to(diameter_array, point_count)
+                raise ValueError()
+            except Exception:
+                raise("Point diameter must be either single float value or a vector with same number as positions")
 
     def _get_properties_as_arrays(self):
         # Get number of points from the number of specified point coordinate triplets
@@ -553,62 +591,11 @@ class PointMessage(MessageBase):
         if point_count == 0:
             raise ValueError("Point positions must be 3-element vector or Nx3 matrix")
 
-        # name
-        if not self.names:
-            name_array = [''] * point_count
-        elif isinstance(self.names, str):
-            name_array = [self.names] * point_count
-        elif len(self.names) == point_count:
-            name_array = self.names
-        else:
-            raise ValueError("Point names must be either a string or list of strings with same number of items as positions")
-
-        # group
-        if not self.groups:
-            group_array = [''] * point_count
-        elif isinstance(self.groups, str):
-            group_array = [self.groups] * point_count
-        elif len(self.groups) == point_count:
-            group_array = self.groups
-        else:
-            raise ValueError("Point groups must be either a string or list of strings with same number of items as positions")
-
-        # owner
-        if not self.owners:
-            owner_array = [''] * point_count
-        elif isinstance(self.owners, str):
-            owner_array = [self.owners] * point_count
-        elif len(self.owners) == point_count:
-            owner_array = self.owners
-        else:
-            raise ValueError("Point owners must be either a string or list of strings with same number of items as positions")
-
-        # rgba (4xN)
-        if not self.rgba_colors:
-            rgba_array = [[255, 255, 0, 255]] * point_count
-        else:
-            try:
-                rgba_array = np.array(self.rgba_colors, dtype=np.uint8)
-                if len(rgba_array.shape) == 1 and rgba_array.shape[0] == 4:
-                    # single rgba vector, repeat it point_count times
-                    rgba_array = np.broadcast_to(rgba_array, (point_count, 4))
-                elif len(rgba_array.shape) != 2 or rgba_array.shape[1] != 4 or rgba_array.shape[0] != point_count:
-                    raise ValueError()
-            except:
-                raise("Point rgba must be either a vector of 4 integers or a matrix with 4 rows and same of columns as positions")
-
-        if not self.diameters:
-            diameter_array = np.zeros(point_count)
-        else:
-            try:
-                diameter_array = np.array(self.diameters, dtype=np.float32)
-                if len(diameter_array.shape) == 0:
-                    # single diameter value, repeat it point_count times
-                    diameter_array = np.broadcast_to(diameter_array, point_count)
-                elif len(diameter_array.shape) != 1 or diameter_array.shape[0] != point_count:
-                    raise ValueError()
-            except:
-                raise("Point diameter must be either single float value or a vector with same number as positions")
+        name_array = PointMessage._get_string_property_as_array(self.names, point_count, 'names')
+        group_array = PointMessage._get_string_property_as_array(self.groups, point_count, 'groups')
+        owner_array = PointMessage._get_string_property_as_array(self.owners, point_count, 'owners')
+        rgba_array = self._get_rgba_property_as_array(point_count)
+        diameter_array = self._get_diameter_property_as_array(point_count)
 
         return name_array, group_array, rgba_array, xyz_array, diameter_array, owner_array
 
@@ -653,6 +640,7 @@ class PointMessage(MessageBase):
 # http://slicer-devel.65872.n3.nabble.com/OpenIGTLinkIF-and-CRC-td4031360.html
 CRC64 = crcmod.mkCrcFun(0x142F0E1EBA9EA3693, rev=False, initCrc=0x0000000000000000, xorOut=0x0000000000000000)
 
+
 # https://github.com/openigtlink/OpenIGTLink/blob/cf9619e2fece63be0d30d039f57b1eb4d43b1a75/Source/igtlutil/igtl_util.c#L168
 def _igtl_nanosec_to_frac(nanosec):
     base = 1000000000  # 10^9
@@ -667,9 +655,10 @@ def _igtl_nanosec_to_frac(nanosec):
         mask >>= 1
     return r
 
+
 # https://github.com/openigtlink/OpenIGTLink/blob/cf9619e2fece63be0d30d039f57b1eb4d43b1a75/Source/igtlutil/igtl_util.c#L193
 def _igtl_frac_to_nanosec(frac):
-    base = 1000000000 # 10^9
+    base = 1000000000  # 10^9
     mask = 0x80000000
     r = 0x00000000
     while mask:
@@ -678,6 +667,7 @@ def _igtl_frac_to_nanosec(frac):
         r += base if (frac & mask) else 0
         mask >>= 1
     return r
+
 
 message_type_to_class_constructor = {
         "TRANSFORM": TransformMessage,

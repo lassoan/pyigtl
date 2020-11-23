@@ -7,19 +7,18 @@ Created on Tue Nov  3 19:17:05 2015
 
 import collections
 import logging
-import numpy as np
 import signal
 import socket
 import socketserver as SocketServer
-import string
 import struct
 import sys
 import threading
 import time
 
-from .messages import MessageBase, ImageMessage, TransformMessage, StringMessage
+from .messages import MessageBase
 
 logger = logging.getLogger(__name__)
+
 
 class OpenIGTLinkBase():
     """Abstract base class for client and server"""
@@ -201,7 +200,7 @@ class OpenIGTLinkServer(SocketServer.TCPServer, OpenIGTLinkBase):
         thread.start()
 
     def stop(self):
-      self._close_server()
+        self._close_server()
 
     def _signal_handler(self, signum, stackframe):
         """Properly close the server if signal is received"""
@@ -211,7 +210,7 @@ class OpenIGTLinkServer(SocketServer.TCPServer, OpenIGTLinkBase):
     def _close_server(self):
         """Will close connection and shutdown server"""
         self._connected = False
-        
+
         self.communication_thread_stop_requested = True
         # It may take a while for _print_host_and_port_thread to stop, so don't wait for it
 
@@ -282,7 +281,7 @@ class OpenIGTLinkClient(OpenIGTLinkBase):
 
     def start(self):
         if self._started:
-          return
+            return
         self._started = True
 
         self.communication_thread_stop_requested = False
@@ -291,7 +290,7 @@ class OpenIGTLinkClient(OpenIGTLinkBase):
 
     def stop(self):
         if not self._started:
-          return
+            return
         self._started = False
         self._connected = False
 
@@ -299,10 +298,10 @@ class OpenIGTLinkClient(OpenIGTLinkBase):
         self.communication_thread_stop_requested = True
         while True:
             if self.communication_thread_stopped:
-              break
+                break
             time.sleep(0.1)
 
-    def _client_thread_function(self):
+    def _client_thread_function(self):  # complex function, but clearly separates what runs in a thread => # noqa: C901
         while True:
             if self.communication_thread_stop_requested:
                 break
@@ -316,19 +315,17 @@ class OpenIGTLinkClient(OpenIGTLinkBase):
             # Reconnect if needed
             if not self._connected:
                 try:
-                  self.socket.connect((self.host, self.port))
-                  self._connected = True
-                except Exception as exp:
-                  self.socket = None
-
-            if not self._connected:
-                time.sleep(0.01)
-                continue
+                    self.socket.connect((self.host, self.port))
+                    self._connected = True
+                except Exception:
+                    self.socket = None
+                    time.sleep(0.01)
+                    continue
 
             # Receive messages
             try:
-              while self._receive_message_from_socket(self.socket):
-                  pass
+                while self._receive_message_from_socket(self.socket):
+                    pass
             except Exception as exp:
                 import traceback
                 traceback.print_exc()

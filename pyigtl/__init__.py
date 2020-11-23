@@ -27,10 +27,13 @@ from .messages import MessageBase, ImageMessage, TransformMessage, StringMessage
 
 from ._version import __version__, __version_info__
 
-# __all__ = ['OpenIGTLinkServer',
-#            'OpenIGTLinkClient',
-#            'ImageMessage',
-#            'TransformMessage',
-#            'StringMessage',
-#            '__version__',
-#            '__version_info__']
+__all__ = ['OpenIGTLinkServer',
+           'OpenIGTLinkClient',
+           'MessageBase',
+           'ImageMessage',
+           'TransformMessage',
+           'StringMessage',
+           'PointMessage',
+           '__version__',
+           '__version_info__'
+           ]
