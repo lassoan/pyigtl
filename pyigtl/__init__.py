@@ -22,10 +22,10 @@ Quick Start
 
 """
 
-# from .comm import OpenIGTLinkServer, OpenIGTLinkClient
-# from .messages import ImageMessage, TransformMessage, StringMessage
+from .comm import OpenIGTLinkServer, OpenIGTLinkClient
+from .messages import MessageBase, ImageMessage, TransformMessage, StringMessage, PointMessage
 
-# from ._version import __version__, __version_info__
+from ._version import __version__, __version_info__
 
 # __all__ = ['OpenIGTLinkServer',
 #            'OpenIGTLinkClient',

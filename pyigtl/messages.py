@@ -5,27 +5,30 @@ Created on Tue Nov  3 19:17:05 2015
 @author: Daniel Hoyer Iversen
 """
 
-from __future__ import print_function
+import collections
 import crcmod
+import logging
 import numpy as np
 import signal
-import collections
 import socket
-import sys
+import socketserver as SocketServer
+import string
 import struct
+import sys
 import threading
 import time
-import string
 
-if sys.version_info >= (3, 0):
-    import socketserver as SocketServer
-else:
-    import SocketServer
-
+logger = logging.getLogger(__name__)
 
 # http://openigtlink.org/protocols/v2_header.html
+# OpenIGTLink uses big-endian for all numeric value storage (therefore ">" is added to all struct descriptors).
 class MessageBase(object):
     """OpenIGTLink message base class"""
+
+    IANA_CHARACTER_SET_ASCII = 3
+    IANA_CHARACTER_SET_UTF8 = 106
+
+    IGTL_HEADER_SIZE = 58
 
     def __init__(self, timestamp=None, device_name=None):
 
@@ -35,7 +38,7 @@ class MessageBase(object):
         # The timestamp field contains a 64-bit timestamp indicating when the data is generated.
         # Please refer http://openigtlink.org/protocols/v2_timestamp.html for the format of the 64-bit timestamp.
         if timestamp is None:
-            self.timestamp = time.time() * 1000
+            self.timestamp = time.time()
         else:
             self.timestamp = timestamp
 
@@ -57,8 +60,6 @@ class MessageBase(object):
         # Key/value string pairs in a map, defining custom metadata (only supported with headerVersion=2).
         self.metadata = {}
 
-        self._endian = ">"  # big-endian
-
     @property
     def is_valid(self):
         """
@@ -78,18 +79,18 @@ class MessageBase(object):
         """Encode string as ASCII if possible, UTF8 otherwise"""
         try:
             encoded_text = text.encode('ascii')
-            encoding = IANA_CHARACTER_SET_ASCII
+            encoding = MessageBase.IANA_CHARACTER_SET_ASCII
         except UnicodeDecodeError:
             encoded_text = text.encode('utf8')
-            encoding = IANA_CHARACTER_SET_UTF8
+            encoding = MessageBase.IANA_CHARACTER_SET_UTF8
         return encoded_text, encoding
 
     @staticmethod
     def decode_text(encoded_text, encoding):
         """Get string by decoding from ASCII or UTF8"""
-        if encoding == IANA_CHARACTER_SET_ASCII:
+        if encoding == MessageBase.IANA_CHARACTER_SET_ASCII:
             text = encoded_text.decode('ascii')
-        elif encoding == IANA_CHARACTER_SET_UTF8:
+        elif encoding == MessageBase.IANA_CHARACTER_SET_UTF8:
             text = encoded_text.decode('utf8')
         else:
             raise("Unsupported encoding: "+str(encoding))
@@ -119,16 +120,19 @@ class MessageBase(object):
     def pack(self):
         """Return a buffer that contains the entire message as binary data"""
 
+        if self.metadata and self.header_version<2:
+            logger.warning("Metadata will not be packed, because message header version = 1 (metadata can only be sent in header version = 2).")
+
         # Pack metadata
         binary_metadata_header = b""
         binary_metadata_body = b""
         if self.header_version>1:
-            for key, value in items(self.metadata):
+            for key, value in self.metadata.items():
                 encoded_key = key.encode('utf8')  # use UTF8 for all strings that specified without encoding
                 encoded_value, encoding = MessageBase.encode_text(value)
-                binary_metadata_header += struct.pack(self._endian+"H", len(encoded_key))
-                binary_metadata_header += struct.pack(self._endian+"H", encoding)
-                binary_metadata_header += struct.pack(self._endian+"I", len(encoded_value))
+                binary_metadata_header += struct.pack("> H", len(encoded_key))
+                binary_metadata_header += struct.pack("> H", encoding)
+                binary_metadata_header += struct.pack("> I", len(encoded_value))
                 binary_metadata_body += encoded_key
                 binary_metadata_body += encoded_value
 
@@ -136,10 +140,10 @@ class MessageBase(object):
         binary_extended_header = b""
         if self.header_version > 1:
             IGTL_EXTENDED_HEADER_SIZE = 12  # OpenIGTLink extended header has a fixed size
-            binary_extended_header += struct.pack(self._endian+"H", IGTL_EXTENDED_HEADER_SIZE)
-            binary_extended_header += struct.pack(self._endian+"H", len(binary_metadata_header))
-            binary_extended_header += struct.pack(self._endian+"I", len(binary_metadata_body))
-            binary_extended_header += struct.pack(self._endian+"I", self.message_id)
+            binary_extended_header += struct.pack("> H", IGTL_EXTENDED_HEADER_SIZE)
+            binary_extended_header += struct.pack("> H", len(binary_metadata_header))
+            binary_extended_header += struct.pack("> I", len(binary_metadata_body))
+            binary_extended_header += struct.pack("> I", self.message_id)
 
         # Pack content and assemble body
         binary_body = binary_extended_header + self._pack_content() + binary_metadata_header + binary_metadata_body
@@ -147,21 +151,21 @@ class MessageBase(object):
         # Pack header
         body_length = len(binary_body)
         crc = CRC64(binary_body)
-        _timestamp1 = int(self.timestamp / 1000)
-        _timestamp2 = _igtl_nanosec_to_frac(int((self.timestamp / 1000.0 - _timestamp1)*10**9))
-        binary_header = struct.pack(self._endian+"H", self.header_version)
-        binary_header += struct.pack(self._endian+"12s", self._message_type.encode('utf8'))
-        binary_header += struct.pack(self._endian+"20s", self.device_name.encode('utf8'))
-        binary_header += struct.pack(self._endian+"II", _timestamp1, _timestamp2)
-        binary_header += struct.pack(self._endian+"Q", body_length)
-        binary_header += struct.pack(self._endian+"Q", crc)
+        _timestamp1 = int(self.timestamp)
+        _timestamp2 = _igtl_nanosec_to_frac(int((self.timestamp - _timestamp1)*10**9))
+        binary_header = struct.pack("> H", self.header_version)
+        binary_header += struct.pack("> 12s", self._message_type.encode('utf8'))
+        binary_header += struct.pack("> 20s", self.device_name.encode('utf8'))
+        binary_header += struct.pack("> II", _timestamp1, _timestamp2)
+        binary_header += struct.pack("> Q", body_length)
+        binary_header += struct.pack("> Q", crc)
 
         # Assemble and return packed message
         return binary_header + binary_body
 
     @staticmethod
     def parse_header(header):
-        s = struct.Struct('> H 12s 20s II Q Q')  # big-endian
+        s = struct.Struct('> H 12s 20s II Q Q')
         values = s.unpack(header)
         header_fields = {}
         header_fields['header_version'] = values[0]
@@ -196,7 +200,7 @@ class MessageBase(object):
         # Unpack extended header
         if self.header_version > 1:
             # Extended header is present
-            s = struct.Struct('> H H I I')  # big-endian
+            s = struct.Struct('> H H I I')
             IGTL_EXTENDED_HEADER_SIZE = 12  # OpenIGTLink extended header has a fixed size
             values = s.unpack(body[:IGTL_EXTENDED_HEADER_SIZE])
             extended_header_size = values[0]
@@ -242,12 +246,28 @@ class MessageBase(object):
 
 # http://openigtlink.org/protocols/v2_image.html
 class ImageMessage(MessageBase):
-    def __init__(self, image=None, spacing=None, timestamp=None, device_name=None):
+
+    scalar_types = {
+        2: np.int8, 3: np.uint8,
+        4: np.int16, 5: np.uint16,
+        6: np.int32, 7: np.uint32,
+        10: np.float32, 11: np.float64,
+        }
+
+    def __init__(self, image=None, ijk_to_world_matrix=None, world_coordinate_system=None, timestamp=None, device_name=None):
         """
         Image message
-        image: image data
-        spacing: spacing in mm
-        timestamp: milliseconds since 1970
+
+        image: image data. Axes are: (k, j, i, components).
+            If a voxel array is created with (i, j, k) axes then it can be converted to
+            (k, j, i) array by calling: ``voxels = np.transpose(voxels, axes=(2,1,0))``
+
+        world_coordinate_system: lps (default) or ras
+
+        ijk_to_world_matrix: specifies origin, spacing, and axis directions
+
+        timestamp: seconds since 1970
+
         device_name: name of the image
         """
 
@@ -257,128 +277,99 @@ class ImageMessage(MessageBase):
 
         if image is not None:
             try:
-                self._image = np.asarray(image)
+                self.image = np.asarray(image)
             except Exception as exp:
                 raise ValueError('Invalid image, cannot get it as a numpy array: ' + str(exp))
-            image_dimension = len(self._image.shape)
+            image_dimension = len(self.image.shape)
             if image_dimension < 1 or image_dimension > 4:
                 raise ValueError("Invalid image, dimension must be between 1 and 4")
         else:
-            self.image=None
+            self.image = None
 
-        self.spacing = spacing
+        self.world_coordinate_system = world_coordinate_system if world_coordinate_system is not None else "lps"
+
+        if ijk_to_world_matrix is not None:
+            self.ijk_to_world_matrix = np.asarray(ijk_to_world_matrix, dtype=np.float32)
+        else:
+            self.ijk_to_world_matrix = np.eye(4)
 
         self._valid_message = True
 
-# Only int8 is supported now
-#        if self._image.dtype == np.int8:
-#            self._datatype_s = 2
-#            self._format_data = "b"
-#        elif self._image.dtype == np.uint8:
-#            self._datatype_s = 3
-#            self._format_data = "B"
-#        elif self._image.dtype == np.int16:
-#            self._datatype_s = 4
-#            self._format_data = "h"
-#        elif self._image.dtype == np.uint16:
-#            self._datatype_s = 5
-#            self._format_data = "H"
-#        elif self._image.dtype == np.int32:
-#            self._datatype_s = 6
-#            self._format_data = "i"
-#        elif self._image.dtype == np.uint32:
-#            self._datatype_s = 7
-#            self._format_data = "I"
-#        elif self._image.dtype == np.float32:
-#            self._datatype_s = 10
-#            self._format_data = "f"
-#        elif self._image.dtype == np.float64:
-#            self._datatype_s = 11
-#            self._format_data = "f"
-#        else:
-#            pass
-        self._image = np.array(self._image, dtype=np.uint8)
-        self._datatype_s = 3
-        self._format_data = "B"
-
-        self._spacing = spacing
-        self._matrix = np.identity(4)  # A matrix representing the origin and the orientation of the image.
-
-    def __str__(self):
+    def content_asstring(self):
         properties = []
-        if self._valid_message:
-            properties.append(f'Device name: {self.device_name}')
-            properties.append(f'Timestamp: {self.timestamp}')
-            properties.append('Matrix:\n  {0}'.format(str(self._matrix).replace('\n', '\n  ')))
-        return f'{self._message_type} message\n  '+'\n  '.join(properties)
+        properties.append(f'Image size: {self.image.shape}')
+        properties.append('Matrix:\n  {0}'.format(str(self.ijk_to_world_matrix).replace('\n', '\n  ')))
+        properties.append(f'World coordinate system: {self.world_coordinate_system}')
+        return '\n'.join(properties)
 
     def _pack_content(self):
-        binary_message = struct.pack(self._endian+"H", self.header_version)
+        # Image header version is always 1
+        binary_message = struct.pack("> H", 1)
+
         # Number of Image Components (1:Scalar, >1:Vector). (NOTE: Vector data is stored fully interleaved.)
-        number_of_components = self._image.shape[3] if len(self._image.shape) > 3 else 1
-        binary_message += struct.pack(self._endian+"B", number_of_components)
-        binary_message += struct.pack(self._endian+"B", self._datatype_s)
-
-        if self._image.dtype.byteorder == "<":
-            byteorder = "F"
-            binary_message += struct.pack(self._endian+"B", 2)  # Endian for image data (1:BIG 2:LITTLE)
-            # (NOTE: values in image header is fixed to BIG endian)
+        image_dim = len(self.image.shape)
+        number_of_components = 1
+        if image_dim == 4:
+            image_size = np.array([self.image.shape[2], self.image.shape[1], self.image.shape[0]])
+            number_of_components = self.image.shape[3]
+        elif image_dim == 3:
+            image_size = np.array([self.image.shape[2], self.image.shape[1], self.image.shape[0]])
+        elif image_dim == 2:
+            image_size = np.array([1, self.image.shape[1], self.image.shape[0]])
+        elif image_dim == 1:
+            image_size = np.array([1, 1, self.image.shape[0]])
         else:
-            self._image.dtype.byteorder == ">"
-            byteorder = "C"
-            binary_message += struct.pack(self._endian+"B", 1)  # Endian for image data (1:BIG 2:LITTLE)
-            # (NOTE: values in image header is fixed to BIG endian)
+            raise ValueError("Image dimension must be between 1 and 4")
 
-        binary_message += struct.pack(self._endian+"B", 1)  # image coordinate (1:RAS 2:LPS)
+        binary_message += struct.pack("> B", number_of_components)
 
-        number_of_slices = self._image.shape[2] if len(self._image.shape) > 2 else 1
-        binary_message += struct.pack(self._endian+"H", number_of_slices)
-        number_of_rows = self._image.shape[1] if len(self._image.shape) > 1 else 1
-        binary_message += struct.pack(self._endian+"H", number_of_rows)
-        binary_message += struct.pack(self._endian+"H", self._image.shape[0])
+        # Scalar type
+        igtl_scalar_type = [igtl_type for igtl_type, numpy_type in ImageMessage.scalar_types.items() if self.image.dtype == numpy_type][0]
+        binary_message += struct.pack("> B", igtl_scalar_type)
 
-        origin = np.zeros(3)
-        norm_i = np.zeros(3)
-        norm_j = np.zeros(3)
-        norm_k = np.zeros(3)
-        for i in range(3):
-            norm_i[i] = self._matrix[i][0]
-            norm_j[i] = self._matrix[i][1]
-            norm_k[i] = self._matrix[i][2]
-            origin[i] = self._matrix[i][3]
+        # Endiannes of image data (1:BIG 2:LITTLE)
+        # byteorder returns '=' for native, '<' for little-endian, '>' for big-endian, and '|' if not applicable.
+        # Since Intel systems are little-endian, we use little-endian for everything else but '>'.
+        # Note: all numerical values in OpenIGTLink messages are still stored as big endian.
+        igtl_endianness = 1 if self.image.dtype.byteorder == ">" else 2
+        binary_message += struct.pack("> B", igtl_endianness)
 
-        spacing = [1.0, 1.0, 1.0]
-        if self._spacing:
-            for i in range(3):
-                if len(self._spacing) > i:
-                    spacing[i] = self._spacing[i]
+        # World coordinate system (1:RAS 2:LPS)
+        binary_message += struct.pack("> B", 1 if self.world_coordinate_system=='ras' else 2)
 
-        binary_message += struct.pack(self._endian+"f", norm_i[0] * spacing[0])
-        binary_message += struct.pack(self._endian+"f", norm_i[1] * spacing[0])
-        binary_message += struct.pack(self._endian+"f", norm_i[2] * spacing[0])
-        binary_message += struct.pack(self._endian+"f", norm_j[0] * spacing[1])
-        binary_message += struct.pack(self._endian+"f", norm_j[1] * spacing[1])
-        binary_message += struct.pack(self._endian+"f", norm_j[2] * spacing[1])
-        binary_message += struct.pack(self._endian+"f", norm_k[0] * spacing[2])
-        binary_message += struct.pack(self._endian+"f", norm_k[1] * spacing[2])
-        binary_message += struct.pack(self._endian+"f", norm_k[2] * spacing[2])
-        binary_message += struct.pack(self._endian+"f", origin[0])
-        binary_message += struct.pack(self._endian+"f", origin[1])
-        binary_message += struct.pack(self._endian+"f", origin[2])
+        # Image size
+        binary_message += struct.pack("> H H H", image_size[0], image_size[1], image_size[2])
 
-        binary_message += struct.pack(self._endian+"H", 0)      # Starting index of subvolume
-        binary_message += struct.pack(self._endian+"H", 0)      # Starting index of subvolume
-        binary_message += struct.pack(self._endian+"H", 0)      # Starting index of subvolume
+        spacing = np.ones(3)
+        for axis_index in range(3):
+            spacing[axis_index] = np.linalg.norm(self.ijk_to_world_matrix[:,axis_index])
 
-        binary_message += struct.pack(self._endian+"H", self._image.shape[0])  # number of pixels of subvolume
-        binary_message += struct.pack(self._endian+"H", self._image.shape[1])
-        if len(self._image.shape) > 2:
-            binary_message += struct.pack(self._endian+"H", self._image.shape[2])
-        else:
-            binary_message += struct.pack(self._endian+"H", 1)
+        # Image to world transform
 
-        binary_message += self._image.tostring(byteorder)  # struct.pack(fmt,*data)
-        
+        # OpenIGTLink describes image position by specifying image center
+        # instead of image origin.
+        image_center_ijk  = np.array([
+            (image_size[0] - 1) / 2.0,
+            (image_size[1] - 1) / 2.0,
+            (image_size[2] - 1) / 2.0,
+            1.0])
+        image_center_world = self.ijk_to_world_matrix.dot(image_center_ijk)
+
+        binary_message += struct.pack("> f f f f f f f f f f f f",
+            *self.ijk_to_world_matrix[0:3,0], # tx, ty, tz
+            *self.ijk_to_world_matrix[0:3,1], # sx, sy, sz
+            *self.ijk_to_world_matrix[0:3,2], # nx, ny, nz
+            *image_center_world[0:3]) # cx, cy, cz
+
+        # Starting index and size of subvolume
+        subvolume_size = image_size
+        binary_message += struct.pack("> H H H H H H",
+            0, 0, 0,
+            subvolume_size[0], subvolume_size[1], subvolume_size[2])
+
+        # Voxels
+        binary_message += self.image.tobytes()
+
         return binary_message
 
     def _unpack_content(self, content):
@@ -387,29 +378,52 @@ class ImageMessage(MessageBase):
         values_header = s_head.unpack(content[0:header_portion_len])
 
         numberOfComponents = values_header[1]
-        endian = values_header[3]
-        size_x = values_header[23]
-        size_y = values_header[24]
-        size_z = values_header[25]
+        igtl_scalar_type = values_header[2]
+        igtl_endianness = values_header[3]
 
-        if endian == 2:
-            endian = '<'
+        world_coordinate_system = values_header[4]
+        self.world_coordinate_system = 'ras' if world_coordinate_system==1 else 'lps'
+
+        image_size = np.array(values_header[5:8])
+
+        self.ijk_to_world_matrix = np.eye(4)
+        self.ijk_to_world_matrix[0:3,0] = values_header[8:11]  # t
+        self.ijk_to_world_matrix[0:3,1] = values_header[11:14]  # s
+        self.ijk_to_world_matrix[0:3,2] = values_header[14:17]  # n
+        self.ijk_to_world_matrix[0:3,3] = values_header[17:20]  # c
+
+        # OpenIGTLink describes image position by specifying image center
+        # instead of image origin.
+        image_origin_ijk  = np.array([
+            -(image_size[0] - 1) / 2.0,
+            -(image_size[1] - 1) / 2.0,
+            -(image_size[2] - 1) / 2.0,
+            1.0])
+        image_origin_world = self.ijk_to_world_matrix.dot(image_origin_ijk)
+        self.ijk_to_world_matrix[0:3,3] = image_origin_world[0:3]
+
+        # Subvolume
+        subvolume_start_index = values_header[20:23]
+        subvolume_size = values_header[23:26]
+        if subvolume_start_index != (0,0,0) or (subvolume_size != image_size).any():
+            # subvolumes are rarely sent, just throw an error instead of implementing it
+            raise NotImplementedError("Subvolume receving is not implemented")
+
+        dt = np.dtype(ImageMessage.scalar_types[igtl_scalar_type])
+        # Endiannes of image data (1:BIG 2:LITTLE)
+        dt = dt.newbyteorder('<' if igtl_endianness == 2 else '>')
+        data = np.frombuffer(content[header_portion_len:], dtype=dt)
+
+        if numberOfComponents == 1:
+            self.image = np.reshape(data, [image_size[2], image_size[1], image_size[0]])
         else:
-            endian = '>'
-
-        values_img = body[header_portion_len:]
-        dt = np.dtype(np.uint8)
-        dt = dt.newbyteorder(endian)
-        data = np.frombuffer(values_img, dtype=dt)
-
-        self._image = np.reshape(data, [size_z, size_y, size_x, numberOfComponents])
-
+            self.image = np.reshape(data, [image_size[2], image_size[1], image_size[0], numberOfComponents])
 
 class TransformMessage(MessageBase):
-    def __init__(self, transform_matrix=None, timestamp=None, device_name=None):
+    def __init__(self, matrix=None, timestamp=None, device_name=None):
         """
         Transform package
-        transform_matrix: 4x4 homogeneous transformation matrix as numpy array
+        matrix: 4x4 homogeneous transformation matrix as numpy array
         timestamp: milliseconds since 1970
         device_name: name of the tool
         """
@@ -417,78 +431,46 @@ class TransformMessage(MessageBase):
         MessageBase.__init__(self, timestamp=timestamp, device_name=device_name)
         self._message_type = "TRANSFORM"
 
-        if transform_matrix is not None:
+        if matrix is not None:
             try:
-                self._matrix = np.asarray(transform_matrix, dtype=np.float32)
-            except Exception as exp:
-                raise ValueError("Invalid transorm_matrix")
-            matrix_dimension = len(self._matrix.shape)
+                self.matrix = np.asarray(matrix, dtype=np.float32)
+            except Exception:
+                raise ValueError("Invalid transform matrix (must be convertible to numpy array)")
+            matrix_dimension = len(self.matrix.shape)
             if matrix_dimension != 2:
-                raise ValueError("Invalid transorm_matrix dimension {0}".format(matrix_dimension))
+                raise ValueError("Invalid transorm matrix dimension {0} (2 is required)".format(matrix_dimension))
+            if self.matrix.shape != (4, 4):
+                raise ValueError("Invalid transorm matrix shape {0} (4x4 is required)".format(self.matrix.shape))
         else:
-            self._matrix = np.eye(4, dtype=np.float32)
-
-# transforms are floats
-#        if self._matrix.dtype == np.int8:
-#            self._datatype_s = 2
-#            self._format_data = "b"
-#        elif self._matrix.dtype == np.uint8:
-#            self._datatype_s = 3
-#            self._format_data = "B"
-#        elif self._matrix.dtype == np.int16:
-#            self._datatype_s = 4
-#            self._format_data = "h"
-#        elif self._matrix.dtype == np.uint16:
-#            self._datatype_s = 5
-#            self._format_data = "H"
-#        elif self._matrix.dtype == np.int32:
-#            self._datatype_s = 6
-#            self._format_data = "i"
-#        elif self._matrix.dtype == np.uint32:
-#            self._datatype_s = 7
-#            self._format_data = "I"
-#        elif self._matrix.dtype == np.float32:
-#            self._datatype_s = 10
-#            self._format_data = "f"
-#        elif self._matrix.dtype == np.float64:
-#            self._datatype_s = 11
-#            self._format_data = "f"
-#        else:
-#            pass
-        self._datatype_s = 10
-        self._format_data = "f"
+            self.matrix = np.eye(4, dtype=np.float32)
 
         self._valid_message = True
 
     def content_asstring(self):
-        properties = []
-        if self._valid_message:
-            properties.append('Matrix:\n  {0}'.format(str(self._matrix).replace('\n', '\n  ')))
-        return '\n'.join(properties)
+        return 'Matrix:\n  {0}'.format(str(self.matrix).replace('\n', '\n  '))
 
     def _pack_content(self):
-        binary_content = struct.pack(self._endian + "f", self._matrix[0, 0])  # R11
-        binary_content += struct.pack(self._endian + "f", self._matrix[1, 0])  # R21
-        binary_content += struct.pack(self._endian + "f", self._matrix[2, 0])  # R31
-
-        binary_content += struct.pack(self._endian + "f", self._matrix[0, 1])  # R12
-        binary_content += struct.pack(self._endian + "f", self._matrix[1, 1])  # R22
-        binary_content += struct.pack(self._endian + "f", self._matrix[2, 1])  # R32
-
-        binary_content += struct.pack(self._endian + "f", self._matrix[0, 2])  # R13
-        binary_content += struct.pack(self._endian + "f", self._matrix[1, 2])  # R23
-        binary_content += struct.pack(self._endian + "f", self._matrix[2, 2])  # R33
-
-        binary_content += struct.pack(self._endian + "f", self._matrix[0, 3])  # TX
-        binary_content += struct.pack(self._endian + "f", self._matrix[1, 3])  # TY
-        binary_content += struct.pack(self._endian + "f", self._matrix[2, 3])  # TZ
-
+        s = struct.Struct('> f f f f f f f f f f f f')
+        binary_content = s.pack(
+            self.matrix[0, 0],  # R11
+            self.matrix[1, 0],  # R21
+            self.matrix[2, 0],  # R31
+            self.matrix[0, 1],  # R12
+            self.matrix[1, 1],  # R22
+            self.matrix[2, 1],  # R32
+            self.matrix[0, 2],  # R13
+            self.matrix[1, 2],  # R23
+            self.matrix[2, 2],  # R33
+            self.matrix[0, 3],  # TX
+            self.matrix[1, 3],  # TY
+            self.matrix[2, 3]  # TZ
+            )
         return binary_content
 
     def _unpack_content(self, content):
         s = struct.Struct('> f f f f f f f f f f f f')
         values = s.unpack(content)
-        self._matrix = np.asarray([[values[0], values[3], values[6], values[9]],
+        self.matrix = np.asarray([[values[0], values[3], values[6], values[9]],
                                    [values[1], values[4], values[7], values[10]],
                                    [values[2], values[5], values[8], values[11]],
                                    [0, 0, 0, 1]])
@@ -508,8 +490,8 @@ class StringMessage(MessageBase):
 
     def _pack_content(self):
         encoded_string, encoding = MessageBase.encode_text(self.string)
-        binary_content = struct.pack(self._endian+"H", encoding)
-        binary_content += struct.pack(self._endian+"H", len(encoded_string))
+        binary_content = struct.pack("> H", encoding)
+        binary_content += struct.pack("> H", len(encoded_string))
         binary_content += encoded_string
         return binary_content
 
@@ -519,7 +501,7 @@ class StringMessage(MessageBase):
         encoding = values_header[0]
         string_length = values_header[1]
         encoded_string = content[header_portion_len:header_portion_len + string_length]
-        self._string = MessageBase.decode_text(encoded_string, encoding)
+        self.string = MessageBase.decode_text(encoded_string, encoding)
 
 
 class PointMessage(MessageBase):
@@ -603,7 +585,7 @@ class PointMessage(MessageBase):
 
         # rgba (4xN)
         if not self.rgba_colors:
-            rgba_array = [255, 255, 0, 255] * point_count
+            rgba_array = [[255, 255, 0, 255]] * point_count
         else:
             try:
                 rgba_array = np.array(self.rgba_colors, dtype=np.uint8)
@@ -637,19 +619,14 @@ class PointMessage(MessageBase):
 
         binary_content = b""
         for point_index in range(point_count):
-            binary_content += struct.pack(self._endian+"64s", name_array[point_index].encode('utf8'))
-            binary_content += struct.pack(self._endian+"32s", group_array[point_index].encode('utf8'))
+            binary_content += struct.pack("> 64s", name_array[point_index].encode('utf8'))
+            binary_content += struct.pack("> 32s", group_array[point_index].encode('utf8'))
             rgba = rgba_array[point_index]
-            binary_content += struct.pack(self._endian+"B", rgba[0])
-            binary_content += struct.pack(self._endian+"B", rgba[1])
-            binary_content += struct.pack(self._endian+"B", rgba[2])
-            binary_content += struct.pack(self._endian+"B", rgba[3])
+            binary_content += struct.pack("> B B B B", rgba[0], rgba[1], rgba[2], rgba[3])
             xyz = xyz_array[point_index]
-            binary_content += struct.pack(self._endian+"f", xyz[0])
-            binary_content += struct.pack(self._endian+"f", xyz[1])
-            binary_content += struct.pack(self._endian+"f", xyz[2])
-            binary_content += struct.pack(self._endian+"f", diameter_array[point_index])
-            binary_content += struct.pack(self._endian+"20s", owner_array[point_index].encode('utf8'))
+            binary_content += struct.pack("> f f f", xyz[0], xyz[1], xyz[2])
+            binary_content += struct.pack("> f", diameter_array[point_index])
+            binary_content += struct.pack("> 20s", owner_array[point_index].encode('utf8'))
 
         return binary_content
 
@@ -660,7 +637,7 @@ class PointMessage(MessageBase):
         self.diameters = []
         self.groups = []
         self.owners = []
-        s = struct.Struct('> 64s 32s B B B B f f f f 20s')  # big-endian
+        s = struct.Struct('> 64s 32s B B B B f f f f 20s')
         item_length = 64+32+4+4*3+4+20
         point_count = int(len(content)/item_length)
         for point_index in range(point_count):
@@ -708,6 +685,3 @@ message_type_to_class_constructor = {
         "STRING": StringMessage,
         "POINT": PointMessage,
     }
-
-IANA_CHARACTER_SET_ASCII = 3
-IANA_CHARACTER_SET_UTF8 = 106

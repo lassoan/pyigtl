@@ -3,4 +3,4 @@
 General examples
 ----------------
 
-Somewhere to start
+Simple examples of creating servers and clients sending and receiving data via OpenIGTLink.

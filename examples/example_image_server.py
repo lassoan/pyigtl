@@ -7,13 +7,13 @@ Simple application that starts a server that provides an image stream with a bri
 
 """
 
-from pyigtl.comm import OpenIGTLinkServer
-from pyigtl.messages import ImageMessage
+import pyigtl  # pylint: disable=import-error
+
 from time import sleep
 import numpy as np
 from math import sin, cos
 
-server = OpenIGTLinkServer(port=18944)
+server = pyigtl.OpenIGTLinkServer(port=18944)
 
 image_size = [500, 300]
 radius = 60
@@ -32,11 +32,14 @@ while True:
     cy = (1+sin(timestep*0.06)) * 0.5 * (image_size[1]-2*radius)+radius
     y, x = np.ogrid[-cx:image_size[0]-cx, -cy:image_size[1]-cy]
     mask = x*x + y*y <= radius*radius
-    voxels = np.ones((image_size[0], image_size[1]))
+    voxels = np.ones((image_size[0], image_size[1], 1))
     voxels[mask] = 255
+
+    # numpy image axes are in kji order, while we generated the image with ijk axes
+    voxels = np.transpose(voxels, axes=(2,1,0))
 
     # Send image
     print(f"time: {timestep}   position: ({cx}, {cy})")
-    image_message = ImageMessage(voxels, device_name="Image")
+    image_message = pyigtl.ImageMessage(voxels, device_name="Image")
     server.send_message(image_message, wait=True)
     # Since we wait until the message is actually sent, the message queue will not be flooded

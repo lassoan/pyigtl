@@ -5,23 +5,21 @@ Created on Tue Nov  3 19:17:05 2015
 @author: Daniel Hoyer Iversen
 """
 
-from __future__ import print_function
+import collections
+import logging
 import numpy as np
 import signal
-import collections
 import socket
-import sys
+import socketserver as SocketServer
+import string
 import struct
+import sys
 import threading
 import time
-import string
 
 from .messages import MessageBase, ImageMessage, TransformMessage, StringMessage
 
-if sys.version_info >= (3, 0):
-    import socketserver as SocketServer
-else:
-    import SocketServer
+logger = logging.getLogger(__name__)
 
 class OpenIGTLinkBase():
     """Abstract base class for client and server"""
@@ -82,7 +80,7 @@ class OpenIGTLinkBase():
         """Returns True if sucessful
         """
         if not isinstance(message, MessageBase) or not message.is_valid:
-            _print("Warning: Only accepts valid messages of class message")
+            logger.warning("Message must be derived from MessageBase class")
             return False
         with self.lock_outgoing_messages:
             self.outgoing_messages.append(message)  # copy.deepcopy(message))
@@ -111,10 +109,9 @@ class OpenIGTLinkBase():
         # called from the communication thread
         header = b""
         received_header_size = 0
-        IGTL_HEADER_SIZE = 58  # OpenIGTLink has a fixed header size
-        while received_header_size < IGTL_HEADER_SIZE:
+        while received_header_size < MessageBase.IGTL_HEADER_SIZE:
             try:
-                header += ssocket.recv(IGTL_HEADER_SIZE - received_header_size)
+                header += ssocket.recv(MessageBase.IGTL_HEADER_SIZE - received_header_size)
             except socket.timeout:
                 # no message received, it is not an error
                 return False
@@ -156,33 +153,35 @@ class OpenIGTLinkBase():
 class OpenIGTLinkServer(SocketServer.TCPServer, OpenIGTLinkBase):
 
     """ For streaming data over TCP with IGTLink"""
-    def __init__(self, port=None, localServer=True, iface=None, start_now=True):
+    def __init__(self, port=None, local_server=True, iface=None, start_now=True):
         OpenIGTLinkBase.__init__(self)
+
+        self.port = port
 
         if iface is None:
             iface = 'eth0'
 
-        if localServer:
-            host = "127.0.0.1"
+        if local_server:
+            self.host = "127.0.0.1"
         else:
             if sys.platform.startswith('win32'):
-                host = socket.gethostbyname(socket.gethostname())
+                self.host = socket.gethostbyname(socket.gethostname())
             elif sys.platform.startswith('linux'):
-                import fcntl
+                import fcntl  # not available on Windows => pylint: disable=import-error
                 soc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 try:
                     ifname = iface
-                    host = socket.inet_ntoa(fcntl.ioctl(soc.fileno(), 0x8915, struct.pack('256s', ifname[:15]))[20:24])
+                    self.host = socket.inet_ntoa(fcntl.ioctl(soc.fileno(), 0x8915, struct.pack('256s', ifname[:15]))[20:24])
                     # http://code.activestate.com/recipes/439094-get-the-ip-address-associated-with-a-network-inter/
                 except: # noqa
                     ifname = 'lo'
-                    host = socket.inet_ntoa(fcntl.ioctl(soc.fileno(), 0x8915, struct.pack('256s', ifname[:15]))[20:24])
+                    self.host = socket.inet_ntoa(fcntl.ioctl(soc.fileno(), 0x8915, struct.pack('256s', ifname[:15]))[20:24])
             else:
                 # the iface can be also an ip address in systems where the previous code won't work
-                host = iface
+                self.host = iface
 
         SocketServer.TCPServer.allow_reuse_address = True
-        SocketServer.TCPServer.__init__(self, (host, port), TCPRequestHandler)
+        SocketServer.TCPServer.__init__(self, (self.host, self.port), TCPRequestHandler)
 
         # Register custom signal handler to properly close the socket when the process is killed
         self._previous_signal_handlers = {}
@@ -218,14 +217,14 @@ class OpenIGTLinkServer(SocketServer.TCPServer, OpenIGTLinkBase):
 
         self.shutdown()  # request stopping of the serving thread (waits until the current request is finished)
         self.server_close()  # clean up the server
-        _print("\nServer closed\n")
+        logger.debug("Server closed")
 
     def _print_host_and_port_thread(self):
         while True:
             # Wait for connection and print a message in every 5 seconds
             while not self._connected:
                 if self.communication_thread_stop_requested:
-                    _print("No connections\nHost: " + str(self.get_host()) + "\nPort number: " + str(self.get_port()))
+                    logging.info("Client not connected (host: {0}, port: {1})".format(self.host, self.port))
                     break
                 time.sleep(5)
             time.sleep(1)
@@ -250,7 +249,7 @@ class TCPRequestHandler(SocketServer.BaseRequestHandler):
             except Exception as exp:
                 import traceback
                 traceback.print_exc()
-                _print('Error while receiving data: '+str(exp))
+                logging.error('Error while receiving data: '+str(exp))
                 self.server._communication_error_occurred()
                 break
 
@@ -260,7 +259,7 @@ class TCPRequestHandler(SocketServer.BaseRequestHandler):
             except Exception as exp:
                 import traceback
                 traceback.print_exc()
-                _print('Error while sending data: '+str(exp))
+                logging.error('Error while sending data: '+str(exp))
                 self.server._communication_error_occurred()
                 break
 
@@ -333,7 +332,7 @@ class OpenIGTLinkClient(OpenIGTLinkBase):
             except Exception as exp:
                 import traceback
                 traceback.print_exc()
-                _print('Error while receiving data: '+str(exp))
+                logging.error('Error while receiving data: '+str(exp))
                 self._communication_error_occurred()
 
             # Send messages
@@ -343,15 +342,10 @@ class OpenIGTLinkClient(OpenIGTLinkBase):
             except Exception as exp:
                 import traceback
                 traceback.print_exc()
-                _print('Error while sending data: '+str(exp))
+                logging.error('Error while sending data: '+str(exp))
                 self._communication_error_occurred()
 
         # Close socket
         if self.socket is not None:
             self.socket.close()
         self.communication_thread_stopped = True
-
-
-# Help functions and help classes:
-def _print(text):
-    print("**********PyIGTLink*********\n" + text + "\n****************************")

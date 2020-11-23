@@ -7,13 +7,12 @@ Simple application that starts a server that sends images, transforms, and strin
 
 """
 
-from pyigtl.comm import OpenIGTLinkServer
-from pyigtl.messages import ImageMessage, TransformMessage, StringMessage
+import pyigtl  # pylint: disable=import-error
 from math import cos, sin, pi
 from time import sleep
 import numpy as np
 
-server = OpenIGTLinkServer(port=18944, localServer=True)
+server = pyigtl.OpenIGTLinkServer(port=18944, local_server=True)
 
 image_size = [400, 200]
 
@@ -29,8 +28,8 @@ while True:
     timestep += 1
 
     # Generate image
-    voxels = np.random.randn(image_size[0], image_size[1])*50+100
-    image_message = ImageMessage(voxels, device_name="Image")
+    voxels = np.random.randn(1,image_size[1], image_size[0])*50+100
+    image_message = pyigtl.ImageMessage(voxels, device_name="Image")
 
     # Generate transform
     matrix = np.eye(4)
@@ -40,10 +39,10 @@ while True:
     matrix[2,1] = -sin(rotation_angle_rad)
     matrix[1,2] = sin(rotation_angle_rad)
     matrix[2,2] = cos(rotation_angle_rad)
-    transform_message = TransformMessage(matrix, device_name="ImageToReference", timestamp=image_message.timestamp)
+    transform_message = pyigtl.TransformMessage(matrix, device_name="ImageToReference", timestamp=image_message.timestamp)
 
     # Generate string
-    string_message = StringMessage("TestingString_"+str(timestep), device_name="Text", timestamp=image_message.timestamp)
+    string_message = pyigtl.StringMessage("TestingString_"+str(timestep), device_name="Text", timestamp=image_message.timestamp)
 
     # Send messages
     server.send_message(image_message)

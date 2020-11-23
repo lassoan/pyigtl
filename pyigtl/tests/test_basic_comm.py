@@ -1,111 +1,109 @@
 # -*- coding: utf-8 -*-
 
-import unittest
 import numpy as np
-
 import pyigtl
-
 import time
+import unittest
 
-# class TestServer(unittest.TestCase):
-    # """
-    # Tests the server
-    # """
-
-    # def setUp(self):     # pylint: disable=invalid-name
-        # """ things to be run when tests are started. """
-        # self.server = pyIGTLink.PyIGTLinkServer(localServer=True)
-        # self.server.start()
-
-    # def tearDown(self):  # pylint: disable=invalid-name
-        # """ Stop down stuff we started. """
-        # self.server.stop()
-
-    # def test_server(self):
-        # self.assertFalse(self.server.is_connected())
-        # self.assertEqual(self.server.get_ip_adress(), "127.0.0.1")
-        # self.assertEqual(self.server.get_port_no(), 18944)
-
-    # def test_add_msgs(self):
-        # samples = 500
-        # beams = 100
-        # k = 0
-
-        # for i in range(10):
-            # k = k+1
-            # data = np.random.randn(samples, beams)*50+100
-            # imageMessage = pyIGTLink.ImageMessage(data)
-            # self.assertTrue(self.server.send_message(imageMessage))
-        # self.assertFalse(self.server.send_message("invalidPackage"))
-        # self.assertFalse(self.server.send_message(pyIGTLink.ImageMessage([1, 2, 3])))
-
-class TestServerClient(unittest.TestCase):
+class TestServerClientRoundtrip(unittest.TestCase):
     """
-    Tests the server
+    Test complete message roundtrip: server send -> client receive -> client send -> server receive
     """
 
-    def setUp(self):     # pylint: disable=invalid-name
-        """ things to be run when tests are started. """
-        self.server = pyIGTLink.PyIGTLinkServer(port=18944, localServer=True)
-        self.client = pyIGTLink.PyIGTLinkClient(host="127.0.0.1", port=18944)
+    def setUp(self):
+        self.server = pyigtl.OpenIGTLinkServer(port=19944)
+        self.client = pyigtl.OpenIGTLinkClient(host="127.0.0.1", port=19944)
+        time.sleep(1.0)
 
-        self.server.start()
-        self.client.start()
-
-    def tearDown(self):  # pylint: disable=invalid-name
-        """ Stop down stuff we started. """
-
+    def tearDown(self):
         self.server.stop()
         self.client.stop()
 
     def test_send_messages(self):
-        
-        time.sleep(1.0)
-        
-        string = "TEST Message"
-        string_message = pyIGTLink.StringMessage("TEST Message", device_name="TestString")
-        self.assertTrue(self.server.send_message(string_message))
-        
+        """Test if both server and client can send and receive messages"""
+
+        # Server send
+        original_message = pyigtl.StringMessage("TEST Message", device_name="TestString")
+        self.assertTrue(self.server.send_message(original_message))
         time.sleep(1.0)
 
+        # Client receive
         received_messages = self.client.get_latest_messages()
         self.assertTrue(len(received_messages) > 0)
+        
+        # Client send
         for message in received_messages:
-          self.server.send_message(message)
-        
+          self.client.send_message(message)
         time.sleep(1.0)
-        
+
+        # Server receive
         received_messages = self.server.get_latest_messages()
         self.assertTrue(len(received_messages) > 0)
-        messageReceived = False
+
+        # Verify message content
+        message_matched = False
         for message in received_messages:
-          if message._device_name == string_message._device_name:
-            self.assertEqual(string_message._string, message._string)
-            messageReceived = True
-        self.assertTrue(messageReceived)
+            if message.device_name == original_message.device_name:
+                # Original message was received
+                self.assertEqual(message.string, original_message.string)
+                message_matched = True
+                break
+        self.assertTrue(message_matched)
 
-
-class TestMsg(unittest.TestCase):
+class TestMessageTypes(unittest.TestCase):
     """
-    Tests the msg
+    Tests that all message types can be packed and unpacked and message content is preserved.
     """
 
-    def test_header_msg(self):
-        msg = pyIGTLink.MessageBase()
-        self.assertEqual(len(msg.get_binary_message()), IGTL_HEADER_SIZE)
+    def setUp(self):
+        self.server = pyigtl.OpenIGTLinkServer(port=19945)
+        self.client = pyigtl.OpenIGTLinkClient(host="127.0.0.1", port=19945)
+        time.sleep(1.0)
 
-    def test_image_msg(self):
-        data = np.random.randn(500, 100)*50+100
-        msg = pyIGTLink.ImageMessage(data)
-        self.assertEqual(len(msg.get_binary_body()), msg.get_body_pack_size())
-        self.assertEqual(len(msg.get_binary_message()), msg.get_body_pack_size() + IGTL_HEADER_SIZE)
+    def tearDown(self):
+        self.server.stop()
+        self.client.stop()
 
-    def test_transform_msg(self):
-        data = np.random.randn(4, 4)
-        msg = pyIGTLink.TransformMessage(data)
-        self.assertEqual(len(msg.get_binary_body()), msg.get_body_pack_size())
-        self.assertEqual(len(msg.get_binary_message()), msg.get_body_pack_size() + IGTL_HEADER_SIZE)
+    def test_send_receive(self):
+        device_name = "Test"
 
+        test_messages = [
+            pyigtl.StringMessage("some message", device_name=device_name),
+            pyigtl.ImageMessage(np.random.randn(30, 10, 5)*50+100, device_name=device_name),
+            pyigtl.PointMessage([[20,30,10], [2,-5,-10], [12.4, 11.3, 0.3]], device_name=device_name),
+            pyigtl.TransformMessage(np.eye(4), device_name=device_name),
+        ]
+        
+        for message in test_messages:
+            self.assertTrue(self.server.send_message(message))
+            self.assertIsNotNone(self.client.wait_for_message(device_name=device_name, timeout=5))
+
+    def test_pack_unpack(self):
+        device_name = "Test"
+
+        test_messages = [
+            pyigtl.StringMessage("some message", device_name=device_name),
+            pyigtl.ImageMessage(np.random.randn(30, 10, 5)*50+100, device_name=device_name),
+            pyigtl.PointMessage([[20,30,10], [2,-5,-10], [12.4, 11.3, 0.3]], device_name=device_name),
+            pyigtl.TransformMessage(np.array([[1,2,3,4], [5,6,7,8], [9,10,11,12], [0,0,0,1]]), device_name=device_name),
+        ]
+        
+        pack_unpack_inconsistencies_found = 0
+        for message in test_messages:
+            print("Original message:\n"+str(message))
+            packed = message.pack()
+            header_fields = pyigtl.MessageBase.parse_header(packed[:pyigtl.MessageBase.IGTL_HEADER_SIZE])
+            new_message = pyigtl.MessageBase.create_message(header_fields['message_type'])
+            new_message.unpack(header_fields, packed[pyigtl.MessageBase.IGTL_HEADER_SIZE:])
+            print("Packed/unpacked message:\n"+str(new_message))
+            new_packed = new_message.pack()
+            if packed == new_packed:
+                print(" -- Correct")
+            else:
+                print(" -- Mismatch")
+                pack_unpack_inconsistencies_found += 1
+        
+        self.assertEqual(pack_unpack_inconsistencies_found, 0)
 
 if __name__ == '__main__':
     unittest.main()
