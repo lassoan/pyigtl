@@ -4,15 +4,19 @@ import os.path
 from setuptools import setup, find_packages
 
 # Get __version__ from pyigtl/_version.py
-base_dir = os.path.dirname(os.path.dirname(__file__))
-with open(os.path.join(base_dir, 'pyigtl', '_version.py')) as f:
+base_dir = os.path.dirname(os.path.realpath(__file__))
+version_file = os.path.join(base_dir, 'pyigtl', '_version.py')
+print("base_dir="+base_dir)
+print("version_file="+version_file)
+with open(version_file) as f:
     exec(f.read())
 # pylint/flake does not know that this script injects a variable, so we need to disable checks
 VERSION = __version__  # pylint:disable=undefined-variable  # noqa: F821
 
 # Get long description from README.md
-with open(os.path.join(base_dir, 'README.md')) as f:
-    LONG_DESCRIPTION = f.read()
+base_path = os.path.abspath(os.path.dirname(__file__))
+with open(os.path.join(base_path, 'README.md')) as f:
+    LONG_DESCRIPTION = f.read() 
 
 opts = dict(
     name="pyigtl",
