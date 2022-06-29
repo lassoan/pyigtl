@@ -7,6 +7,7 @@ Created on Tue Nov  3 19:17:05 2015
 
 import collections
 import logging
+import os
 import signal
 import socket
 import socketserver as SocketServer
@@ -205,7 +206,8 @@ class OpenIGTLinkServer(SocketServer.TCPServer, OpenIGTLinkBase):
     def _signal_handler(self, signum, stackframe):
         """Properly close the server if signal is received"""
         self._close_server()
-        self._previous_signal_handlers[signum](signum, stackframe)
+        signal.signal(signum, self._previous_signal_handlers[signum])
+        os.kill(os.getpid(), signum)
 
     def _close_server(self):
         """Will close connection and shutdown server"""
