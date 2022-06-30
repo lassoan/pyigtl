@@ -244,7 +244,8 @@ class TCPRequestHandler(SocketServer.BaseRequestHandler):
 
             try:
                 while self.server._receive_message_from_socket(self.request):
-                    pass
+                    if self.server.communication_thread_stop_requested:
+                        break
             except Exception as exp:
                 import traceback
                 traceback.print_exc()
