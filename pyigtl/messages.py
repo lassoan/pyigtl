@@ -121,6 +121,7 @@ class MessageBase(object):
         binary_metadata_header = b""
         binary_metadata_body = b""
         if self.header_version > 1:
+            binary_metadata_header += struct.pack("> H", len(self.metadata))
             for key, value in self.metadata.items():
                 encoded_key = key.encode('utf8')  # use UTF8 for all strings that specified without encoding
                 encoded_value, encoding = MessageBase.encode_text(value)
