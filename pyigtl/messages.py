@@ -637,6 +637,120 @@ class PointMessage(MessageBase):
             self.owners.append(values[10].decode().rstrip(' \t\r\n\0'))
 
 
+class PolyDataMessage(MessageBase):
+    def __init__(self, vtk_poly_data=None, points=None, vertices=None, lines=None, polygons=None, triangle_strips=None, attributes=None,
+                 timestamp=None, device_name=None):
+        """
+        Initialize PolyData from vtkPolyData or from numpy arrays.
+        Note: attributes are not supported yet.
+        """
+
+        MessageBase.__init__(self, timestamp=timestamp, device_name=device_name)
+        self._message_type = "POLYDATA"
+        if vtk_poly_data:
+            from vtk.util import numpy_support
+            self.points = numpy_support.vtk_to_numpy(vtk_poly_data.GetPoints().GetData())
+            self.vertices = numpy_support.vtk_to_numpy(vtk_poly_data.GetVerts().GetData())
+            self.lines = numpy_support.vtk_to_numpy(vtk_poly_data.GetLines().GetData())
+            self.polygons = numpy_support.vtk_to_numpy(vtk_poly_data.GetPolys().GetData())
+            self.triangle_strips = numpy_support.vtk_to_numpy(vtk_poly_data.GetStrips().GetData())
+            self.attributes = None  # TODO: implement attributes support
+        else:
+            self.points = points
+            self.vertices = vertices
+            self.lines = lines
+            self.polygons = polygons
+            self.triangle_strips = triangle_strips
+            self.attributes = attributes
+        self._valid_message = True
+
+    def content_asstring(self):
+        content = ""
+        content += f"Points: {self.points}\n"
+        content += f"Vertices: {self.vertices}\n"
+        content += f"Lines: {self.lines}\n"
+        content += f"Polygons: {self.polygons}\n"
+        content += f"Triangle strips: {self.triangle_strips}\n"
+        content += f"Attributes: {self.attributes}\n"
+        return content
+
+    def content_as_vtk_poly_data(self):
+        # TODO: implement this
+        raise NotImplementedError("content_as_vtk_poly_data has not been implemented yet")
+
+    @staticmethod
+    def _get_number_of_cells(array_list):
+        number_of_cells = 0
+        value_index = 0
+        while value_index < len(array_list):
+            number_of_cells += 1
+            value_index += array_list[value_index] + 1
+        return number_of_cells
+
+    def _pack_content(self):
+        binary_content = b""
+        binary_content += struct.pack("> I", len(self.points) if self.points is not None else 0)  # NPOINTS
+        binary_content += struct.pack("> I", PolyDataMessage._get_number_of_cells(self.vertices) if self.vertices is not None else 0)  # NVERTICES
+        binary_content += struct.pack("> I", 4 * len(self.vertices) if self.vertices is not None else 0)  # SIZE_VERTICES
+        binary_content += struct.pack("> I", PolyDataMessage._get_number_of_cells(self.lines) if self.lines is not None else 0)  # NLINES
+        binary_content += struct.pack("> I", 4 * len(self.lines) if self.lines is not None else 0)  # SIZE_LINES
+        binary_content += struct.pack("> I", PolyDataMessage._get_number_of_cells(self.polygons) if self.polygons is not None else 0)  # NPOLYGONS
+        binary_content += struct.pack("> I", 4 * len(self.polygons) if self.polygons is not None else 0)  # SIZE_POLYGONS
+        binary_content += struct.pack("> I", PolyDataMessage._get_number_of_cells(self.triangle_strips) if self.triangle_strips is not None else 0)  # NTRIANGLE_STRIPS
+        binary_content += struct.pack("> I", 4 * len(self.triangle_strips) if self.triangle_strips is not None else 0)  # SIZE_TRIANGLE_STRIPS
+        binary_content += struct.pack("> I", len(self.attributes) if self.attributes is not None else 0)  # N_ATTRIBUTES
+        if self.points is not None:
+            binary_content += np.ascontiguousarray(self.points, dtype='>f').tobytes()
+        if self.vertices is not None:
+            binary_content += self.vertices.astype(np.int32).tobytes()
+        if self.lines is not None:
+            binary_content += np.ascontiguousarray(self.lines, dtype='>I').tobytes()
+        if self.polygons is not None:
+            binary_content += np.ascontiguousarray(self.polygons, dtype='>I').tobytes()
+        if self.triangle_strips is not None:
+            binary_content += np.ascontiguousarray(self.triangle_strips, dtype='>I').tobytes()
+        if self.attributes is not None:
+            # TODO: implement this
+            raise NotImplementedError("Attribute support is not implemented yet")
+        return binary_content
+
+    def _unpack_content(self, content):
+
+        # Note: This method has not been tested
+
+        poly_data_header = struct.Struct('> I I I I I I I I I I')
+        number_of_points = poly_data_header[0]
+        vertices_count = poly_data_header[1]
+        vertices_size_byte = poly_data_header[2]
+        lines_count = poly_data_header[3]
+        lines_size_byte = poly_data_header[4]
+        polygons_count = poly_data_header[5]
+        polygons_size_byte = poly_data_header[6]
+        triangle_strips_count = poly_data_header[7]
+        triangle_strips_size_byte = poly_data_header[8]
+        attributes_count = poly_data_header[9]
+        start_position = poly_data_header.size
+
+        points_size_byte = number_of_points * 3 * 4
+        self.points = np.frombuffer(content[start_position : start_position + points_size_byte], dtype='>f')
+        start_position += points_size_byte
+
+        self.vertices = np.frombuffer(content[start_position : start_position + vertices_size_byte], dtype='>I')
+        start_position += vertices_size_byte
+
+        self.lines = np.frombuffer(content[start_position : start_position + lines_size_byte], dtype='>I')
+        start_position += lines_size_byte
+
+        self.polygons = np.frombuffer(content[start_position : start_position + polygons_size_byte], dtype='>I')
+        start_position += polygons_size_byte
+
+        self.triangle_strips = np.frombuffer(content[start_position : start_position + triangle_strips_size_byte], dtype='>I')
+        start_position += triangle_strips_size_byte
+
+        # TODO: read attributes from start_position
+        self.attributes = None
+
+
 # http://slicer-devel.65872.n3.nabble.com/OpenIGTLinkIF-and-CRC-td4031360.html
 CRC64 = crcmod.mkCrcFun(0x142F0E1EBA9EA3693, rev=False, initCrc=0x0000000000000000, xorOut=0x0000000000000000)
 
