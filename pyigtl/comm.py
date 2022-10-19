@@ -208,6 +208,7 @@ class OpenIGTLinkServer(SocketServer.TCPServer, OpenIGTLinkBase):
         self._close_server()
         # Restore original signal handler
         signal.signal(signum, self._previous_signal_handlers[signum])
+        # Send the signal again (this time the original signal handler will process it)
         os.kill(os.getpid(), signum)
 
     def _close_server(self):
