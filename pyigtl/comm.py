@@ -206,6 +206,7 @@ class OpenIGTLinkServer(SocketServer.TCPServer, OpenIGTLinkBase):
     def _signal_handler(self, signum, stackframe):
         """Properly close the server if signal is received"""
         self._close_server()
+        # Restore original signal handler
         signal.signal(signum, self._previous_signal_handlers[signum])
         os.kill(os.getpid(), signum)
 
