@@ -757,10 +757,11 @@ class PositionMessage(MessageBase):
     def __init__(self, positions=None, quaternions=None, names=None, rgba_colors=None, diameters=None, groups=None, owners=None,
                  timestamp=None, device_name=None):
         """
-        positions: 3-element vector (for 1 point) or Nx3 matrix (for N points)
+        :param positions: 3-element vector (for 1 position) or Nx3 matrix (for N positions)
+        :param quaternions: 4-element vector (for 1 position) or Nx4 matrix (for N positions)
         """
         MessageBase.__init__(self, timestamp=timestamp, device_name=device_name)
-        self._message_type = "POINT"
+        self._message_type = "POSITION"
         self.positions = positions
         self.quaternions = quaternions
         self.names = names
@@ -800,7 +801,7 @@ class PositionMessage(MessageBase):
         elif len(string_value_or_array) == point_count:
             return string_value_or_array
         else:
-            raise ValueError(f"Point {label} must be either a string or list of strings with same number of items as positions")
+            raise ValueError(f"Position {label} must be either a string or list of strings with same number of items as positions")
 
     def _get_rgba_property_as_array(self, point_count):
         # rgba (4xN)
