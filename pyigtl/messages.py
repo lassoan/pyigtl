@@ -601,13 +601,12 @@ class PointMessage(MessageBase):
         return name_array, group_array, rgba_array, xyz_array, diameter_array, owner_array
 
     def _pack_content(self):
-
         name_array, group_array, rgba_array, xyz_array, diameter_array, owner_array = self._get_properties_as_arrays()
         point_count = len(name_array)
 
         binary_content = b""
         for point_index in range(point_count):
-            binary_content += struct.pack("> 64s", name_array[point_index].encode('utf8'))
+            binary_content += struct.pack("> 64s", str(name_array[point_index]).encode('utf8'))
             binary_content += struct.pack("> 32s", group_array[point_index].encode('utf8'))
             rgba = rgba_array[point_index]
             binary_content += struct.pack("> B B B B", rgba[0], rgba[1], rgba[2], rgba[3])
@@ -817,7 +816,7 @@ class PositionMessage(MessageBase):
                     return np.broadcast_to(rgba_array, (point_count, 4))
                 raise ValueError()
             except Exception:
-                raise ValueError("Point rgba must be either a vector of 4 integers or a matrix with 4 rows and same of columns as positions")
+                raise ValueError("Position rgba must be either a vector of 4 integers or a matrix with 4 rows and same of columns as positions")
 
     def _get_diameter_property_as_array(self, point_count):
         if not self.diameters:
@@ -848,7 +847,7 @@ class PositionMessage(MessageBase):
             if xyz_array.shape[1] == 3:
                 point_count = xyz_array.shape[0]
         if point_count == 0:
-            raise ValueError("Point positions must be 3-element vector or Nx3 matrix")
+            raise ValueError("Position point arrays must be 3-element vector or Nx3 matrix")
 
         name_array = PointMessage._get_string_property_as_array(self.names, point_count, 'names')
         group_array = PointMessage._get_string_property_as_array(self.groups, point_count, 'groups')
@@ -878,23 +877,24 @@ class PositionMessage(MessageBase):
 
     def _unpack_content(self, content):
         self.positions = []
+        self.quaternions = []
         self.names = []
         self.rgba_colors = []
         self.diameters = []
         self.groups = []
         self.owners = []
-        s = struct.Struct('> 64s 32s B B B B f f f f 20s')
-        item_length = 64 + 32 + 4 + 4 * 3 + 4 + 20
-        point_count = int(len(content)/item_length)
+        s = struct.Struct('> 64s 32s B B B B f f f f f f f f 20s')
+        item_length = 64 + 32 + 4 + 4 * 7 + 4 + 20
+        point_count = int(len(content) / item_length)
         for point_index in range(point_count):
-            values = s.unpack(content[point_index*item_length:(point_index+1)*item_length])
+            values = s.unpack(content[point_index * item_length:(point_index+1) * item_length])
             self.names.append(values[0].decode().rstrip(' \t\r\n\0'))
             self.groups.append(values[1].decode().rstrip(' \t\r\n\0'))
             self.rgba_colors.append((values[2], values[3], values[4], values[5]))
             self.positions.append((values[6], values[7], values[8]))
-            self.quaternions.append((values[9], values[10], values[11]))
-            self.diameters.append(values[12])
-            self.owners.append(values[13].decode().rstrip(' \t\r\n\0'))
+            self.quaternions.append((values[9], values[10], values[11], values[12]))
+            self.diameters.append(values[13])
+            self.owners.append(values[14].decode().rstrip(' \t\r\n\0'))
 
 
 
