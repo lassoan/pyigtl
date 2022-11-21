@@ -606,7 +606,7 @@ class PointMessage(MessageBase):
 
         binary_content = b""
         for point_index in range(point_count):
-            binary_content += struct.pack("> 64s", str(name_array[point_index]).encode('utf8'))
+            binary_content += struct.pack("> 64s", name_array[point_index].encode('utf8'))
             binary_content += struct.pack("> 32s", group_array[point_index].encode('utf8'))
             rgba = rgba_array[point_index]
             binary_content += struct.pack("> B B B B", rgba[0], rgba[1], rgba[2], rgba[3])
