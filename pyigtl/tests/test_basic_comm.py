@@ -74,6 +74,7 @@ class TestMessageTypes(unittest.TestCase):
             pyigtl.ImageMessage(np.random.randn(30, 10, 5) * 50 + 100, device_name=device_name),
             pyigtl.PointMessage([[20, 30, 10], [2, -5, -10], [12.4, 11.3, 0.3]], device_name=device_name),
             pyigtl.TransformMessage(np.eye(4), device_name=device_name),
+            pyigtl.PositionMessage([[1, 2, 3], [4, 5, 6]], [[1, 2, 3, 4], [5, 6, 7, 8]], device_name=device_name),
         ]
 
         for message in test_messages:
@@ -88,16 +89,17 @@ class TestMessageTypes(unittest.TestCase):
             pyigtl.ImageMessage(np.random.randn(30, 10, 5)*50+100, device_name=device_name),
             pyigtl.PointMessage([[20, 30, 10], [2, -5, -10], [12.4, 11.3, 0.3]], device_name=device_name),
             pyigtl.TransformMessage(np.array([[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [0, 0, 0, 1]]), device_name=device_name),
+            pyigtl.PositionMessage([[1, 2, 3], [4, 5, 6]], [[1, 2, 3, 4], [5, 6, 7, 8]], device_name=device_name),
         ]
 
         pack_unpack_inconsistencies_found = 0
         for message in test_messages:
-            print("Original message:\n"+str(message))
+            print(f"Original message:\n{message}")
             packed = message.pack()
             header_fields = pyigtl.MessageBase.parse_header(packed[:pyigtl.MessageBase.IGTL_HEADER_SIZE])
             new_message = pyigtl.MessageBase.create_message(header_fields['message_type'])
             new_message.unpack(header_fields, packed[pyigtl.MessageBase.IGTL_HEADER_SIZE:])
-            print("Packed/unpacked message:\n"+str(new_message))
+            print(f"Packed/unpacked message:\n{new_message}")
             new_packed = new_message.pack()
             if packed == new_packed:
                 print(" -- Correct")

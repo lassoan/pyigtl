@@ -23,7 +23,7 @@ Quick Start
 """
 
 from .comm import OpenIGTLinkServer, OpenIGTLinkClient
-from .messages import MessageBase, ImageMessage, TransformMessage, StringMessage, PointMessage, PolyDataMessage
+from .messages import MessageBase, ImageMessage, TransformMessage, StringMessage, PointMessage, PolyDataMessage, PositionMessage
 
 from ._version import __version__, __version_info__
 
@@ -35,6 +35,7 @@ __all__ = ['OpenIGTLinkServer',
            'StringMessage',
            'PointMessage',
            'PolyDataMessage',
+           'PositionMessage',
            '__version__',
            '__version_info__'
            ]

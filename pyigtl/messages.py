@@ -601,7 +601,6 @@ class PointMessage(MessageBase):
         return name_array, group_array, rgba_array, xyz_array, diameter_array, owner_array
 
     def _pack_content(self):
-
         name_array, group_array, rgba_array, xyz_array, diameter_array, owner_array = self._get_properties_as_arrays()
         point_count = len(name_array)
 
@@ -752,6 +751,153 @@ class PolyDataMessage(MessageBase):
         self.attributes = None
 
 
+
+class PositionMessage(MessageBase):
+    def __init__(self, positions=None, quaternions=None, names=None, rgba_colors=None, diameters=None, groups=None, owners=None,
+                 timestamp=None, device_name=None):
+        """
+        :param positions: 3-element vector (for 1 position) or Nx3 matrix (for N positions)
+        :param quaternions: 4-element vector (for 1 position) or Nx4 matrix (for N positions)
+        """
+        MessageBase.__init__(self, timestamp=timestamp, device_name=device_name)
+        self._message_type = "POSITION"
+        self.positions = positions
+        self.quaternions = quaternions
+        self.names = names
+        self.rgba_colors = rgba_colors
+        self.diameters = diameters
+        self.groups = groups
+        self.owners = owners
+        self._valid_message = True
+
+    def content_asstring(self):
+        items = []
+        name_array, group_array, rgba_array, xyz_array, quaternion_array, diameter_array, owner_array = self._get_properties_as_arrays()
+        point_count = len(name_array)
+        for point_index in range(point_count):
+            item = f"Position {point_index+1}: name: '{name_array[point_index]}'"
+            if group_array[point_index]:
+                item += f", group: '{group_array[point_index]}'"
+            xyz = xyz_array[point_index]
+            quaternion = quaternion_array[point_index]
+            item += f", xyz: [{xyz[0]}, {xyz[1]}, {xyz[2]}]"
+            item += f", 0ijk: [{quaternion[0]}, {quaternion[1]}, {quaternion[2]}, {quaternion[3]}]"
+            rgba = rgba_array[point_index]
+            item += f", rgba: [{rgba[0]}, {rgba[1]}, {rgba[2]}, {rgba[3]}]"
+            item += f", diameter: {diameter_array[point_index]}"
+            if owner_array[point_index]:
+                item += f", owner: '{owner_array[point_index]}'"
+            items.append(item)
+
+        return "\n".join(items)
+
+    @staticmethod
+    def _get_string_property_as_array(string_value_or_array, point_count, label):
+        if not string_value_or_array:
+            return [''] * point_count
+        elif isinstance(string_value_or_array, str):
+            return [string_value_or_array] * point_count
+        elif len(string_value_or_array) == point_count:
+            return string_value_or_array
+        else:
+            raise ValueError(f"Position {label} must be either a string or list of strings with same number of items as positions")
+
+    def _get_rgba_property_as_array(self, point_count):
+        # rgba (4xN)
+        if not self.rgba_colors:
+            return [[255, 255, 0, 255]] * point_count
+        else:
+            try:
+                rgba_array = np.array(self.rgba_colors, dtype=np.uint8)
+                if len(rgba_array.shape) == 2 and rgba_array.shape[1] == 4 and rgba_array.shape[0] == point_count:
+                    return rgba_array
+                elif len(rgba_array.shape) == 1 and rgba_array.shape[0] == 4:
+                    # single rgba vector, repeat it point_count times
+                    return np.broadcast_to(rgba_array, (point_count, 4))
+                raise ValueError()
+            except Exception:
+                raise ValueError("Position rgba must be either a vector of 4 integers or a matrix with 4 rows and same of columns as positions")
+
+    def _get_diameter_property_as_array(self, point_count):
+        if not self.diameters:
+            return np.zeros(point_count)
+        else:
+            try:
+                diameter_array = np.array(self.diameters, dtype=np.float32)
+                if len(diameter_array.shape) == 1 and diameter_array.shape[0] == point_count:
+                    return diameter_array
+                elif len(diameter_array.shape) == 0:
+                    # single diameter value, repeat it point_count times
+                    return np.broadcast_to(diameter_array, point_count)
+                raise ValueError()
+            except Exception:
+                raise("Point diameter must be either single float value or a vector with same number as positions")
+
+    def _get_properties_as_arrays(self):
+        # Get number of points from the number of specified point coordinate triplets
+        xyz_array = np.asarray(self.positions, dtype=np.float32)
+        quaternion_array = np.asarray(self.quaternions, dtype=np.float32)
+        point_count = 0
+        if len(xyz_array.shape) == 1:
+            if xyz_array.shape[0] == 3:
+                point_count = 1
+                xyz_array = [xyz_array]
+                quaternion_array = [quaternion_array]
+        elif len(xyz_array.shape) == 2:
+            if xyz_array.shape[1] == 3:
+                point_count = xyz_array.shape[0]
+        if point_count == 0:
+            raise ValueError("Position point arrays must be 3-element vector or Nx3 matrix")
+
+        name_array = PointMessage._get_string_property_as_array(self.names, point_count, 'names')
+        group_array = PointMessage._get_string_property_as_array(self.groups, point_count, 'groups')
+        owner_array = PointMessage._get_string_property_as_array(self.owners, point_count, 'owners')
+        rgba_array = self._get_rgba_property_as_array(point_count)
+        diameter_array = self._get_diameter_property_as_array(point_count)
+
+        return name_array, group_array, rgba_array, xyz_array, quaternion_array, diameter_array, owner_array
+
+    def _pack_content(self):
+        name_array, group_array, rgba_array, xyz_array, quaternion_array, diameter_array, owner_array = self._get_properties_as_arrays()
+        point_count = len(name_array)
+
+        binary_content = b""
+        for point_index in range(point_count):
+            binary_content += struct.pack("> 64s", name_array[point_index].encode('utf8'))
+            binary_content += struct.pack("> 32s", group_array[point_index].encode('utf8'))
+            rgba = rgba_array[point_index]
+            binary_content += struct.pack("> B B B B", rgba[0], rgba[1], rgba[2], rgba[3])
+            xyz = xyz_array[point_index]
+            binary_content += struct.pack("> f f f", xyz[0], xyz[1], xyz[2])
+            quaternion = quaternion_array[point_index]
+            binary_content += struct.pack("> f f f f", quaternion[0], quaternion[1], quaternion[2], quaternion[3])
+            binary_content += struct.pack("> f", diameter_array[point_index])
+            binary_content += struct.pack("> 20s", owner_array[point_index].encode('utf8'))
+        return binary_content
+
+    def _unpack_content(self, content):
+        self.positions = []
+        self.quaternions = []
+        self.names = []
+        self.rgba_colors = []
+        self.diameters = []
+        self.groups = []
+        self.owners = []
+        s = struct.Struct('> 64s 32s B B B B f f f f f f f f 20s')
+        item_length = 64 + 32 + 4 + 4 * 7 + 4 + 20
+        point_count = int(len(content) / item_length)
+        for point_index in range(point_count):
+            values = s.unpack(content[point_index * item_length:(point_index+1) * item_length])
+            self.names.append(values[0].decode().rstrip(' \t\r\n\0'))
+            self.groups.append(values[1].decode().rstrip(' \t\r\n\0'))
+            self.rgba_colors.append((values[2], values[3], values[4], values[5]))
+            self.positions.append((values[6], values[7], values[8]))
+            self.quaternions.append((values[9], values[10], values[11], values[12]))
+            self.diameters.append(values[13])
+            self.owners.append(values[14].decode().rstrip(' \t\r\n\0'))
+
+
+
 # http://slicer-devel.65872.n3.nabble.com/OpenIGTLinkIF-and-CRC-td4031360.html
 CRC64 = crcmod.mkCrcFun(0x142F0E1EBA9EA3693, rev=False, initCrc=0x0000000000000000, xorOut=0x0000000000000000)
 
@@ -789,4 +935,5 @@ message_type_to_class_constructor = {
         "IMAGE": ImageMessage,
         "STRING": StringMessage,
         "POINT": PointMessage,
+        "POSITION": PositionMessage,
     }
