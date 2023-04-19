@@ -897,6 +897,104 @@ class PositionMessage(MessageBase):
             self.owners.append(values[14].decode().rstrip(' \t\r\n\0'))
 
 
+# tracker
+TDATA_TYPE_TRACKER = 1
+# 6D instrument
+TDATA_TYPE_6D = 2
+# 3D instrument
+TDATA_TYPE_3D = 3
+# 5D instrument
+TDATA_TYPE_5D = 4
+
+
+class TDataRecord:
+    def __init__(self, matrix, name='', type_=TDATA_TYPE_TRACKER):
+        assert len(name) <= 20
+        self.name = name.strip()
+        assert type_ in (1, 2, 3, 4)
+        self.type = type_
+        if matrix is not None:
+            try:
+                self.matrix = np.asarray(matrix, dtype=np.float32)
+            except Exception:
+                raise ValueError("Invalid transform matrix (must be convertible to numpy array)")
+            matrix_dimension = len(self.matrix.shape)
+            if matrix_dimension != 2:
+                raise ValueError("Invalid transorm matrix dimension {0} (2 is required)".format(matrix_dimension))
+            if self.matrix.shape != (4, 4):
+                raise ValueError("Invalid transorm matrix shape {0} (4x4 is required)".format(self.matrix.shape))
+        else:
+            self.matrix = np.eye(4, dtype=np.float32)
+    
+    def content_asstring(self):
+        return f'Matrix:\n  {str(self.matrix)}'.replace('\n', '\n  ')
+
+    def _pack_content(self):
+        s = struct.Struct('> 20s B B f f f f f f f f f f f f')
+        binary_content = s.pack(
+            self.name.encode('UTF-8'),
+            self.type,
+            0,
+            self.matrix[0, 0],  # R11
+            self.matrix[1, 0],  # R21
+            self.matrix[2, 0],  # R31
+            self.matrix[0, 1],  # R12
+            self.matrix[1, 1],  # R22
+            self.matrix[2, 1],  # R32
+            self.matrix[0, 2],  # R13
+            self.matrix[1, 2],  # R23
+            self.matrix[2, 2],  # R33
+            self.matrix[0, 3],  # TX
+            self.matrix[1, 3],  # TY
+            self.matrix[2, 3]  # TZ
+        )
+        return binary_content
+
+    @staticmethod
+    def _unpack_content(content):
+        s = struct.Struct('> 20s B B f f f f f f f f f f f f')
+        values = s.unpack(content)
+        name = values[0].decode()
+        type_ = values[1]
+        _ = values[2] # "reserved"
+        matrix = np.asarray([[values[3], values[6], values[9], values[12]],
+                                  [values[4], values[7], values[10], values[13]],
+                                  [values[5], values[8], values[11], values[14]],
+                                  [0, 0, 0, 1]])
+        return TDataRecord(matrix, type_=type_, name=name)
+
+
+class TDataMessage(MessageBase):
+    def __init__(self, data=None, timestamp=None, device_name=None):
+        """
+        TDATA package
+        data: list of TDataRecords
+        timestamp: milliseconds since 1970
+        device_name: name of the tool
+        """
+        MessageBase.__init__(self, timestamp=timestamp, device_name=device_name)
+        self._message_type = "TDATA"
+        self.data = data
+        self._valid_message = True
+
+    def content_asstring(self):
+        return '\n'.join([d.content_asstring() for d in self.data])
+
+    def _pack_content(self):
+        binary_content = b''
+        for d in self.data:
+            binary_content += d._pack_content()
+        return binary_content
+
+    def _unpack_content(self, content):
+        self.data = []
+        record_size = struct.calcsize('> 20s B B f f f f f f f f f f f f')
+        records = len(content) // record_size
+        for i in range(records):
+            content_slice = content[i * record_size:(i + 1) * record_size]
+            record = TDataRecord._unpack_content(content_slice)
+            self.data.append(record)
+
 
 # http://slicer-devel.65872.n3.nabble.com/OpenIGTLinkIF-and-CRC-td4031360.html
 CRC64 = crcmod.mkCrcFun(0x142F0E1EBA9EA3693, rev=False, initCrc=0x0000000000000000, xorOut=0x0000000000000000)
@@ -936,4 +1034,5 @@ message_type_to_class_constructor = {
         "STRING": StringMessage,
         "POINT": PointMessage,
         "POSITION": PositionMessage,
+        "TDATA": TDataMessage,
     }
