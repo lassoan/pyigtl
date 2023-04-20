@@ -911,7 +911,7 @@ class TDataRecord:
     def __init__(self, matrix, name='', type_=TDATA_TYPE_TRACKER):
         assert len(name) <= 20
         self.name = name.strip()
-        assert type_ in (1, 2, 3, 4)
+        assert type_ in (TDATA_TYPE_TRACKER, TDATA_TYPE_6D, TDATA_TYPE_3D, TDATA_TYPE_5D)
         self.type = type_
         if matrix is not None:
             try:
