@@ -105,32 +105,64 @@ class OpenIGTLinkBase():
         socket.sendall(binary_message)
         return True
 
-    def _receive_message_from_socket(self, ssocket):
-        # called from the communication thread
-        header = b""
-        received_header_size = 0
-        while received_header_size < MessageBase.IGTL_HEADER_SIZE:
+    def _recv_exactly(self, ssocket, nbytes, deadline=None):
+        """Receive exactly `nbytes` bytes.
+
+        - If `deadline` is provided, keep retrying on socket.timeout until the deadline is reached.
+        - If no data is available and the socket times out before any byte is received, return None.
+          This allows the caller to treat it as "no message available" instead of an error.
+        """
+        chunks = []
+        received = 0
+        while received < nbytes:
+            # If we have a deadline and it is exceeded:
+            if deadline is not None and time.time() > deadline:
+                # If nothing has been received at all, treat as "no data available".
+                if received == 0:
+                    return None
+                # Otherwise, this means we started receiving but couldn't complete in time.
+                raise socket.timeout()
+
             try:
-                header += ssocket.recv(MessageBase.IGTL_HEADER_SIZE - received_header_size)
+                chunk = ssocket.recv(nbytes - received)
             except socket.timeout:
-                # no message received, it is not an error
-                return False
-            if len(header) == 0:
-                return False
-            received_header_size = len(header)
+                # No bytes available *right now*.
+                if received == 0 and deadline is None:
+                    return None
+                # If we have a deadline, keep trying until it hits.
+                continue
+
+            if not chunk:
+                return None  # connection closed
+
+            chunks.append(chunk)
+            received += len(chunk)
+
+        return b"".join(chunks)
+
+    def _receive_message_from_socket(self, ssocket):
+        header_deadline = time.time() + 0.01
+        header = self._recv_exactly(
+            ssocket,
+            MessageBase.IGTL_HEADER_SIZE,
+            deadline=header_deadline,
+        )
+        if header is None:
+            return False
 
         header_fields = MessageBase.parse_header(header)
         body_size = header_fields['body_size']
         message_type = header_fields['message_type']
 
-        body = b""
-        received_body_size = 0
-        while received_body_size < body_size:
-            body += ssocket.recv(body_size - received_body_size)
-            if len(body) == 0:
-                return False
-            received_body_size = len(body)
-
+        body_deadline = time.time() + max(2.0, body_size / (5 * 1024 * 1024))  # ~5MB/s assumed
+        body = self._recv_exactly(
+            ssocket,
+            body_size,
+            deadline=body_deadline,
+        )
+        if body is None:
+            return False
+        
         message = MessageBase.create_message(message_type)
         if not message:
             # unknown message type
@@ -329,8 +361,16 @@ class OpenIGTLinkClient(OpenIGTLinkBase):
 
             # Receive messages
             try:
-                while self._receive_message_from_socket(self.socket):
-                    pass
+                # Fairness: under high-rate incoming streams (e.g. IMAGE), the original
+                # implementation can starve outgoing messages because it keeps receiving
+                # indefinitely and never reaches the send loop. Limit how many messages
+                # we receive per iteration, then always give sending a chance.
+                max_receive_per_iteration = 3
+                for _ in range(max_receive_per_iteration):
+                    if self.communication_thread_stop_requested:
+                        break
+                    if not self._receive_message_from_socket(self.socket):
+                        break
             except Exception as exp:
                 import traceback
                 traceback.print_exc()
