@@ -22,6 +22,7 @@ opts = dict(
     name="pyigtl",
     python_requires='>=3.6',
     version=VERSION,
+    license="MIT",
     maintainer="Andras Lasso",
     maintainer_email="lasso@queensu.ca",
     author="Andras Lasso, Daniel Hoyer Iversen, Kyle Sunderland",
@@ -33,7 +34,6 @@ opts = dict(
     download_url="https://github.com/lassoan/pyigtl/archive/master.zip",
     keywords="openigtlink igt medical imaging",
     classifiers=[
-      "License :: OSI Approved :: MIT License",
       "Intended Audience :: Developers",
       "Intended Audience :: Healthcare Industry",
       "Intended Audience :: Science/Research",

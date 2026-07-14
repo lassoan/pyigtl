@@ -9,24 +9,58 @@ on:
 
 jobs:
   deploy:
-
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
-    - uses: actions/checkout@v2
-    - name: Set up Python
-      uses: actions/setup-python@v2
+    - uses: actions/checkout@v4
       with:
-        python-version: '3.x'
-        fetch-depth: 2
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install setuptools wheel twine
-    - name: Build and publish
+        python -m pip install build twine
+
+    - name: Validate release tag matches package version
+      env:
+        RELEASE_TAG: ${{ github.event.release.tag_name }}
+      run: |
+        python - <<'PY'
+        import pathlib
+        import re
+
+        version_text = pathlib.Path('pyigtl/_version.py').read_text(encoding='utf-8')
+        match = re.search(r"__version__\s*:\s*str\s*=\s*'([^']+)'", version_text)
+        if not match:
+            raise SystemExit('Could not parse __version__ from pyigtl/_version.py')
+
+        package_version = match.group(1)
+        release_tag = '${{ github.event.release.tag_name }}'
+        normalized_tag = release_tag[1:] if release_tag.startswith('v') else release_tag
+
+        if package_version != normalized_tag:
+            raise SystemExit(
+                f"Release tag/version mismatch: tag '{release_tag}' != package version '{package_version}'"
+            )
+
+        print(f"Release tag and package version match: {release_tag}")
+        PY
+
+    - name: Build distribution artifacts
+      run: python -m build
+
+    - name: Check distribution artifacts
+      run: twine check dist/*
+
+    - name: Publish to PyPI
       env:
         TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
         TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
-      run: |
-        python setup.py sdist bdist_wheel
-        twine upload dist/*
+      run: twine upload --non-interactive --skip-existing dist/*
