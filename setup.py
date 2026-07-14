@@ -3,15 +3,19 @@
 import os.path
 from setuptools import setup, find_packages
 
-# Get __version__ from pyigtl/_version.py
+# Get version from CI-provided release tag when available, fallback to pyigtl/_version.py.
 base_dir = os.path.dirname(os.path.realpath(__file__))
-version_file = os.path.join(base_dir, 'pyigtl', '_version.py')
-print("base_dir="+base_dir)
-print("version_file="+version_file)
-with open(version_file) as f:
-    exec(f.read())
-# pylint/flake does not know that this script injects a variable, so we need to disable checks
-VERSION = __version__  # pylint:disable=undefined-variable  # noqa: F821
+release_version = os.environ.get('PYIGTL_RELEASE_VERSION')
+if release_version:
+    VERSION = release_version
+else:
+    version_file = os.path.join(base_dir, 'pyigtl', '_version.py')
+    print("base_dir="+base_dir)
+    print("version_file="+version_file)
+    with open(version_file) as f:
+        exec(f.read())
+    # pylint/flake does not know that this script injects a variable, so we need to disable checks
+    VERSION = __version__  # pylint:disable=undefined-variable  # noqa: F821
 
 # Get long description from README.md
 base_path = os.path.abspath(os.path.dirname(__file__))
