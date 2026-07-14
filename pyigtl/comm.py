@@ -20,13 +20,19 @@ from .messages import MessageBase
 
 logger = logging.getLogger(__name__)
 
+# Maximum time to wait for the rest of an OpenIGTLink message body after the
+# header has already arrived. The timer resets whenever body bytes are
+# received, so only a stalled stream will time out.
+IGTL_BODY_RECEIVE_TIMEOUT_SEC = 5.0
+
 
 class OpenIGTLinkBase():
     """Abstract base class for client and server"""
 
-    def __init__(self):
+    def __init__(self, body_receive_timeout_sec=IGTL_BODY_RECEIVE_TIMEOUT_SEC):
         self._started = False  # server/client started
         self._connected = False  # there is a socket connection that is successfully sending/receiving
+        self.body_receive_timeout_sec = body_receive_timeout_sec
 
         # Flags to request stopping of the thread
         # Accessed from main and communication threads.
@@ -125,11 +131,23 @@ class OpenIGTLinkBase():
 
         body = b""
         received_body_size = 0
+        body_last_progress_time = time.time()
         while received_body_size < body_size:
-            body += ssocket.recv(body_size - received_body_size)
-            if len(body) == 0:
+            try:
+                chunk = ssocket.recv(body_size - received_body_size)
+            except socket.timeout:
+                # TCP can split a body across multiple packets; keep waiting
+                # for the rest of the payload instead of logging a timeout.
+                if time.time() - body_last_progress_time > self.body_receive_timeout_sec:
+                    raise socket.timeout(
+                        "OpenIGTLink body receive timed out after {0:.1f} seconds".format(
+                            self.body_receive_timeout_sec))
+                continue
+            if len(chunk) == 0:
                 return False
+            body += chunk
             received_body_size = len(body)
+            body_last_progress_time = time.time()
 
         message = MessageBase.create_message(message_type)
         if not message:
@@ -153,8 +171,8 @@ class OpenIGTLinkBase():
 class OpenIGTLinkServer(SocketServer.TCPServer, OpenIGTLinkBase):
 
     """ For streaming data over TCP with IGTLink"""
-    def __init__(self, port=None, local_server=True, iface=None, start_now=True):
-        OpenIGTLinkBase.__init__(self)
+    def __init__(self, port=None, local_server=True, iface=None, start_now=True, body_receive_timeout_sec=IGTL_BODY_RECEIVE_TIMEOUT_SEC):
+        OpenIGTLinkBase.__init__(self, body_receive_timeout_sec=body_receive_timeout_sec)
 
         self.port = port
 
@@ -269,8 +287,8 @@ class TCPRequestHandler(SocketServer.BaseRequestHandler):
 
 
 class OpenIGTLinkClient(OpenIGTLinkBase):
-    def __init__(self, host="127.0.0.1", port=18944, start_now=True):
-        OpenIGTLinkBase.__init__(self)
+    def __init__(self, host="127.0.0.1", port=18944, start_now=True, body_receive_timeout_sec=IGTL_BODY_RECEIVE_TIMEOUT_SEC):
+        OpenIGTLinkBase.__init__(self, body_receive_timeout_sec=body_receive_timeout_sec)
 
         self.socket = None
         self.host = host
