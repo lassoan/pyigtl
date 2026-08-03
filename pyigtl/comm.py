@@ -189,11 +189,11 @@ class OpenIGTLinkServer(SocketServer.TCPServer, OpenIGTLinkBase):
                 soc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 try:
                     ifname = iface
-                    self.host = socket.inet_ntoa(fcntl.ioctl(soc.fileno(), 0x8915, struct.pack('256s', ifname[:15]))[20:24])
+                    self.host = socket.inet_ntoa(fcntl.ioctl(soc.fileno(), 0x8915, struct.pack('256s', bytes(ifname[:15], 'utf-8')))[20:24])
                     # http://code.activestate.com/recipes/439094-get-the-ip-address-associated-with-a-network-inter/
                 except: # noqa
                     ifname = 'lo'
-                    self.host = socket.inet_ntoa(fcntl.ioctl(soc.fileno(), 0x8915, struct.pack('256s', ifname[:15]))[20:24])
+                    self.host = socket.inet_ntoa(fcntl.ioctl(soc.fileno(), 0x8915, struct.pack('256s', bytes(ifname[:15], 'utf-8')))[20:24])
             else:
                 # the iface can be also an ip address in systems where the previous code won't work
                 self.host = iface
